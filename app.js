@@ -12,10 +12,14 @@ class App {
     // Init components
     this.mindMap = new MindMap('mindmap-container', this.data);
     this.sidebar = new Sidebar(this.data);
-    this.chat = new ChatPanel(this.data);
+    this.chat    = new ChatPanel(this.data);
+    this.meeting = new MeetingProcessor(this.data, new ClaudeAPI());
     
     this.bindEvents();
     this.updateStats();
+
+    // Expose showToast globally for other modules
+    window.showToast = (msg, type) => this.showToast(msg, type);
   }
   
   bindEvents() {
@@ -77,7 +81,46 @@ class App {
          this.importData(e.target.files[0]);
        }
     });
-    
+
+    // ── Meeting Panel ──────────────────────────────────────────────────────
+    document.getElementById('tb-meeting').addEventListener('click', () => this.meeting.toggle());
+    document.getElementById('close-meeting').addEventListener('click',  () => this.meeting.close());
+
+    document.getElementById('mtg-process-btn').addEventListener('click', () => {
+      const transcript = document.getElementById('mtg-transcript').value.trim();
+      const title      = document.getElementById('mtg-title').value.trim();
+      if (!transcript) {
+        this.meeting._showError('Please paste a meeting transcript first.');
+        return;
+      }
+      const settings = this.data.getSettings();
+      this.meeting.api.setApiKey(settings.anthropicApiKey || '');
+      this.meeting.processTranscript(transcript, title);
+    });
+
+    document.getElementById('mtg-file-upload').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        document.getElementById('mtg-transcript').value = ev.target.result;
+        document.getElementById('mtg-title').value = file.name.replace(/\.[^.]+$/, '');
+      };
+      reader.readAsText(file);
+      e.target.value = '';
+    });
+
+    document.querySelectorAll('.mtg-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.mtg-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        const target = tab.dataset.tab;
+        document.getElementById('mtg-tab-process').classList.toggle('hidden', target !== 'process');
+        document.getElementById('mtg-tab-history').classList.toggle('hidden', target !== 'history');
+        if (target === 'history') this.meeting._renderHistory();
+      });
+    });
+
     // Modal closes
     document.querySelectorAll('.modal-close, .modal-cancel').forEach(btn => {
        btn.addEventListener('click', () => {

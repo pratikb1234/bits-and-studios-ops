@@ -30,6 +30,9 @@
         <button id="tb-add-node" class="toolbar-btn primary">
           <span class="btn-icon">➕</span> Add Node
         </button>
+        <button id="tb-meeting" class="toolbar-btn accent" title="Process Meeting Transcript">
+          <span class="btn-icon">📋</span> Meeting
+        </button>
         <button id="tb-zoom-in" class="toolbar-btn" title="Zoom In">
           <span class="btn-icon">🔍+</span>
         </button>
@@ -144,6 +147,91 @@
         </div>
       </aside>
 
+      <!-- Meeting Processor Panel (Left, overlaps sidebar) -->
+      <aside id="meeting-panel" class="panel hidden meeting-panel">
+        <div class="meeting-header">
+          <div class="meeting-header-left">
+            <div class="meeting-icon">📋</div>
+            <div>
+              <h3>Meeting Processor</h3>
+              <div class="meeting-subtitle">AI extracts tasks &amp; updates your map</div>
+            </div>
+          </div>
+          <button id="close-meeting" class="sidebar-close">✕</button>
+        </div>
+
+        <!-- Tab bar -->
+        <div class="meeting-tabs">
+          <button class="mtg-tab active" data-tab="process">✨ Process</button>
+          <button class="mtg-tab" data-tab="history">📅 History</button>
+        </div>
+
+        <!-- Process Tab -->
+        <div class="mtg-tab-content" id="mtg-tab-process">
+
+          <!-- Input area -->
+          <div id="meeting-input-area" class="meeting-input-area">
+            <div class="field-group">
+              <label class="field-label">Meeting Title</label>
+              <input type="text" id="mtg-title" class="field-input" placeholder="e.g. Weekly Ops Review — May 21">
+            </div>
+            <div class="field-group">
+              <label class="field-label">Paste Transcript or Notes</label>
+              <textarea id="mtg-transcript" class="mtg-textarea" placeholder="Paste your meeting notes, transcript, or summary here...
+
+Example:
+Pratik: We need to finalise the floor plan by end of May.
+Anjalee: I'll handle the membership pricing tiers.
+Decided: Launch event on June 1st confirmed."></textarea>
+            </div>
+            <div class="mtg-upload-row">
+              <span class="mtg-muted">or</span>
+              <label class="mtg-upload-btn">
+                📎 Upload .txt file
+                <input type="file" id="mtg-file-upload" accept=".txt,.md" style="display:none">
+              </label>
+            </div>
+            <div id="mtg-error" class="mtg-error hidden"></div>
+            <button id="mtg-process-btn" class="btn btn-primary mtg-process-btn">✨ Analyse Meeting</button>
+            <div id="mtg-spinner" class="mtg-spinner hidden">
+              <div class="mtg-spinner-dot"></div>
+              <div class="mtg-spinner-dot"></div>
+              <div class="mtg-spinner-dot"></div>
+              <span>Claude is reading your meeting…</span>
+            </div>
+          </div>
+
+          <!-- Preview area (shown after Claude responds) -->
+          <div id="meeting-preview" class="meeting-preview hidden">
+            <div class="mtg-preview-header">
+              <div class="mtg-preview-title">📝 Summary</div>
+            </div>
+            <div id="mtg-summary-text" class="mtg-section-body"></div>
+
+            <div class="mtg-preview-header" style="margin-top:16px">
+              <div class="mtg-preview-title">✅ Action Items</div>
+            </div>
+            <div id="mtg-actions-text" class="mtg-section-body"></div>
+
+            <div class="mtg-preview-header" style="margin-top:16px">
+              <div class="mtg-preview-title">🗺️ Mind Map Changes</div>
+              <div class="mtg-preview-sub">Review before applying</div>
+            </div>
+            <div id="mtg-map-changes" class="mtg-map-changes"></div>
+
+            <div class="mtg-preview-actions">
+              <button id="mtg-approve-btn" class="btn btn-primary">✅ Apply to Map</button>
+              <button id="mtg-discard-btn" class="btn btn-secondary">✕ Discard</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- History Tab -->
+        <div class="mtg-tab-content hidden" id="mtg-tab-history">
+          <div id="mtg-history-list" class="mtg-history-list"></div>
+        </div>
+      </aside>
+
       <!-- Interactive Mind Map (Center) -->
       <div id="mindmap-container"></div>
 
@@ -250,6 +338,7 @@
   <script src="sidebar.js"></script>
   <script src="claude-integration.js"></script>
   <script src="chat.js"></script>
+  <script src="meeting.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
