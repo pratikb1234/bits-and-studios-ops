@@ -87,7 +87,15 @@
     }
 
     setStatus('Connecting…', 'connecting');
-    socket = io({ reconnectionDelay: RECONNECT_DELAY });
+
+    // Explicitly allow both transports so Render's proxy can negotiate properly
+    socket = io(window.location.origin, {
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionDelay: RECONNECT_DELAY,
+      reconnectionAttempts: Infinity,
+      timeout: 20000,
+    });
 
     socket.on('connect', () => {
       setStatus('Live ●', 'live');

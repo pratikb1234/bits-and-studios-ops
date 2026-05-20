@@ -11,8 +11,17 @@ const fs      = require('fs');
 
 const app    = express();
 const server = http.createServer(app);
-const io     = new Server(server, {
-  cors: { origin: '*', methods: ['GET', 'POST'] }
+
+// Trust Render's reverse proxy so Socket.io WebSocket upgrades work
+app.set('trust proxy', 1);
+
+const io = new Server(server, {
+  cors: { origin: '*', methods: ['GET', 'POST'] },
+  transports: ['websocket', 'polling'],   // try WebSocket first, fall back to polling
+  allowEIO3: true,                         // allow older Socket.io clients
+  pingTimeout: 60000,                      // 60s — keeps connection alive on free tier
+  pingInterval: 25000,                     // heartbeat every 25s
+  upgradeTimeout: 30000,
 });
 
 const PORT      = process.env.PORT || 3000;
