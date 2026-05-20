@@ -1,0 +1,17 @@
+{
+  "name": "bits-and-studios-ops",
+  "version": "1.0.0",
+  "description": "Bits & Studios — Strategic Operations Mind Map with real-time collaboration",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": ["mindmap", "collaboration", "real-time", "makerspace"],
+  "author": "Pratik Bhatt",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.4"
+  }
+}

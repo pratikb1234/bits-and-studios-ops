@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bits & Studios - Strategic Mind Map</title>
+  
+  <!-- D3.js -->
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  
+  <!-- Socket.io Client (loaded from our own server) -->
+  <script src="/socket.io/socket.io.js"></script>
+
+  <!-- App Styles -->
+  <link rel="stylesheet" href="index.css">
+</head>
+<body>
+  
+  <div id="app">
+    <!-- Toolbar -->
+    <header id="toolbar">
+      <div class="toolbar-logo">
+        <div class="logo-icon">🎯</div>
+        <div class="logo-text">Bits & Studios</div>
+      </div>
+      
+      <div class="toolbar-divider"></div>
+      
+      <div class="toolbar-actions">
+        <button id="tb-add-node" class="toolbar-btn primary">
+          <span class="btn-icon">➕</span> Add Node
+        </button>
+        <button id="tb-zoom-in" class="toolbar-btn" title="Zoom In">
+          <span class="btn-icon">🔍+</span>
+        </button>
+        <button id="tb-zoom-out" class="toolbar-btn" title="Zoom Out">
+          <span class="btn-icon">🔍-</span>
+        </button>
+        <button id="tb-zoom-fit" class="toolbar-btn" title="Fit to Screen">
+          <span class="btn-icon">👁️</span>
+        </button>
+      </div>
+      
+      <div class="toolbar-stats">
+        <div class="stat-badge">
+          Tasks <span id="stat-total-tasks" class="stat-value">0</span>
+        </div>
+        <div class="stat-badge">
+          Coverage 
+          <span id="stat-completion-pct" class="stat-value">0%</span>
+          <svg class="coverage-ring" viewBox="0 0 24 24">
+            <circle class="bg" cx="12" cy="12" r="10"></circle>
+            <circle class="fg" cx="12" cy="12" r="10" stroke-dasharray="62.83" stroke-dashoffset="62.83"></circle>
+          </svg>
+        </div>
+        
+        <div class="toolbar-divider" style="margin: 0 8px;"></div>
+        
+        <button id="tb-export" class="toolbar-btn" title="Export JSON">📥 Export</button>
+        <button id="tb-import" class="toolbar-btn" title="Import JSON">📤 Import</button>
+        <input type="file" id="import-file-input" class="hidden" accept=".json">
+        
+        <button id="tb-settings" class="toolbar-btn" title="Settings">⚙️</button>
+        <button id="toggle-chat" class="toolbar-btn" title="AI Chat">🤖 Claude AI</button>
+      </div>
+
+      <!-- Live Presence Bar -->
+      <div id="presence-bar" class="presence-bar" title="Online teammates">
+        <div id="presence-avatars" class="presence-avatars"></div>
+        <div id="collab-status" class="collab-status connecting">Connecting…</div>
+      </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main id="main-content">
+      
+      <!-- Task Sidebar (Left) -->
+      <aside id="sidebar" class="panel hidden">
+        <div class="sidebar-header">
+          <h3>Task Details</h3>
+          <button id="sb-close" class="sidebar-close">✕</button>
+        </div>
+        
+        <div class="sidebar-body">
+          <div class="field-group">
+            <label class="field-label">Title</label>
+            <input type="text" id="sb-title" class="field-input" placeholder="Task Name">
+          </div>
+          
+          <div class="field-group">
+            <label class="field-label">Department</label>
+            <select id="sb-dept" class="field-select"></select>
+          </div>
+          
+          <div class="field-group">
+            <label class="field-label">Description</label>
+            <textarea id="sb-desc" class="field-textarea" placeholder="Add notes..."></textarea>
+          </div>
+          
+          <div class="field-group">
+            <label class="field-label">Status</label>
+            <div class="status-pills">
+              <button class="status-pill active" data-status="not_started">Not Started</button>
+              <button class="status-pill" data-status="in_progress">In Progress</button>
+              <button class="status-pill" data-status="done">Done</button>
+            </div>
+          </div>
+          
+          <div class="field-group">
+            <label class="field-label">Priority</label>
+            <div class="priority-pills">
+              <button class="priority-pill" data-priority="low">Low</button>
+              <button class="priority-pill active" data-priority="medium">Med</button>
+              <button class="priority-pill" data-priority="high">High</button>
+              <button class="priority-pill" data-priority="critical">Crit</button>
+            </div>
+          </div>
+          
+          <div class="field-group">
+            <label class="field-label">Due Date</label>
+            <input type="date" id="sb-due" class="field-input">
+          </div>
+          
+          <div class="field-group">
+            <label class="field-label">Assignees</label>
+            <div id="sb-assignees" class="assignee-list"></div>
+            <select id="sb-new-assignee" class="field-select" style="padding: 4px 8px; width: 120px; font-size: 11px;">
+              <option value="">+ Assign to...</option>
+            </select>
+          </div>
+          
+          <div class="field-group">
+            <label class="field-label">Subtasks</label>
+            <div id="sb-subtasks" class="subtask-list"></div>
+            <div class="add-subtask-row">
+              <input type="text" id="sb-new-subtask" placeholder="Add a subtask...">
+              <button id="sb-add-subtask">Add</button>
+            </div>
+          </div>
+        </div>
+        
+        <div class="sidebar-actions">
+          <button id="sb-delete" class="btn danger">🗑️ Delete Task</button>
+        </div>
+      </aside>
+
+      <!-- Interactive Mind Map (Center) -->
+      <div id="mindmap-container"></div>
+
+      <!-- Claude Chat Panel (Right) -->
+      <aside id="chat-panel" class="panel hidden">
+        <div class="chat-header">
+          <div class="chat-header-left">
+            <div class="chat-ai-avatar">✨</div>
+            <div>
+              <h3>Claude Advisor</h3>
+              <div class="chat-subtitle">AI Strategic Assistant</div>
+            </div>
+          </div>
+          <button id="close-chat" class="chat-toggle">✕</button>
+        </div>
+        
+        <!-- API Key Prompt State -->
+        <div id="api-key-prompt" class="api-key-prompt">
+          <div class="key-icon">🔑</div>
+          <h4>Claude API Key Required</h4>
+          <p>To use the AI strategic advisor, you need to provide an Anthropic API key. This is stored securely in your browser's local storage.</p>
+          <div class="api-key-input-group">
+            <input type="password" id="api-key-input" placeholder="sk-ant-...">
+            <button id="save-api-key">Save</button>
+          </div>
+        </div>
+
+        <!-- Chat State -->
+        <div id="chat-messages" class="chat-messages">
+          <!-- Messages inserted here -->
+          <div id="chat-typing" class="chat-typing hidden">
+            <div class="msg-avatar">🤖</div>
+            <div class="typing-dots">
+              <div class="typing-dot"></div>
+              <div class="typing-dot"></div>
+              <div class="typing-dot"></div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="chat-input-area">
+          <div class="chat-input-wrapper">
+            <textarea id="chat-input" placeholder="Ask Claude to analyze gaps, suggest strategies, or add tasks..."></textarea>
+            <button id="chat-send" disabled>↑</button>
+          </div>
+          <div class="chat-hint">Claude can automatically modify your mind map.</div>
+        </div>
+      </aside>
+      
+    </main>
+  </div>
+
+  <!-- Context Menu -->
+  <div id="context-menu" class="hidden"></div>
+  
+  <!-- Toasts -->
+  <div id="toast-container"></div>
+  
+  <!-- Settings Modal -->
+  <div id="settings-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Dashboard Settings</h3>
+        <button class="modal-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="field-group">
+          <label class="field-label">Anthropic API Key (Claude)</label>
+          <input type="password" id="setting-api-key" class="field-input" placeholder="sk-ant-api03-...">
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Stored locally. Required for AI chat features.</div>
+        </div>
+        <div class="field-group">
+          <label class="field-label">Team Members (comma separated)</label>
+          <textarea id="setting-team" class="field-textarea" placeholder="Alice, Bob, Charlie..."></textarea>
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Used for task assignment dropdowns.</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary modal-cancel">Cancel</button>
+        <button class="btn btn-primary" id="save-settings">Save Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Join Session Modal -->
+  <div id="join-modal" class="modal-overlay">
+    <div class="modal join-modal">
+      <div class="join-modal-logo">🎯</div>
+      <h2>Welcome to Bits &amp; Studios</h2>
+      <p class="join-modal-sub">Enter your name to join the collaborative session</p>
+      <input type="text" id="join-name-input" class="field-input" placeholder="Your name (e.g. Pratik)" maxlength="32" autofocus>
+      <button id="join-btn" class="btn btn-primary" style="width:100%;margin-top:12px;">Join Session →</button>
+      <div class="join-modal-hint">Your presence will be visible to teammates in real time</div>
+    </div>
+  </div>
+
+  <!-- Peer Cursors Container -->
+  <div id="peer-cursors"></div>
+
+  <!-- Application Scripts -->
+  <script src="data.js"></script>
+  <script src="collab-sync.js"></script>
+  <script src="mindmap.js"></script>
+  <script src="sidebar.js"></script>
+  <script src="claude-integration.js"></script>
+  <script src="chat.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+node_modules/
+collab-data.json
+.DS_Store
+*.log
+.env
