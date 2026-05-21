@@ -311,25 +311,29 @@ class App {
   
   showToast(message, type = 'info') {
     const container = document.getElementById('toast-container');
+
+    // Cap at 3 — remove oldest if more
+    while (container.children.length >= 3) {
+      container.firstChild.remove();
+    }
+
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
-    
-    let icon = 'ℹ️';
-    if (type === 'success') icon = '✅';
-    if (type === 'error') icon = '❌';
-    if (type === 'warning') icon = '⚠️';
-    
+
+    const icon = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' }[type] || 'ℹ️';
+
     toast.innerHTML = `
       <span class="toast-icon">${icon}</span>
       <span class="toast-message">${message}</span>
+      <button class="toast-close" onclick="this.closest('.toast').remove()">✕</button>
     `;
-    
+
     container.appendChild(toast);
-    
+
     setTimeout(() => {
       toast.classList.add('leaving');
-      toast.addEventListener('animationend', () => toast.remove());
-    }, 3000);
+      toast.addEventListener('animationend', () => toast.remove(), { once: true });
+    }, 2500);
   }
 }
 

@@ -156,8 +156,28 @@
               <button id="sb-add-subtask">Add</button>
             </div>
           </div>
+
+          <!-- Files & Documents Section -->
+          <div class="field-group sb-files-section">
+            <div class="sb-files-header">
+              <label class="field-label" style="margin:0">Files & Documents</label>
+              <span id="sb-files-count" class="sb-files-count"></span>
+            </div>
+            <div id="sb-files-list" class="sb-files-list"></div>
+            <div class="sb-files-actions">
+              <label class="sb-btn-upload" title="Upload file from computer">
+                📎 Upload
+                <input type="file" id="sb-file-upload" style="display:none" multiple
+                       onchange="window.app?.sidebar?.uploadFiles(this.files)">
+              </label>
+              <button id="sb-gen-doc" class="sb-btn-gen" title="Generate a professional document for this task with AI"
+                      onclick="window.app?.sidebar?.generateDocForTask()">
+                ✨ AI Doc
+              </button>
+            </div>
+          </div>
         </div>
-        
+
         <div class="sidebar-actions">
           <button id="sb-delete" class="btn danger">🗑️ Delete Task</button>
         </div>
