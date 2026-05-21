@@ -348,7 +348,7 @@ class DocsPanel {
     }
 
     this.gemini.setApiKey(apiKey);
-    this.gemini.model = 'gemini-2.0-flash';
+    this.gemini.model = 'gemini-flash-latest';
 
     // Show loading state
     document.getElementById(`generating-${sectionId}`)?.classList.remove('hidden');
@@ -428,7 +428,7 @@ Write only the section content — no introductory text, no "Here is the section
     } finally {
       document.getElementById(`generating-${sectionId}`)?.classList.add('hidden');
       if (aiBtn) { aiBtn.disabled = false; aiBtn.textContent = '✨ Generate'; }
-      this.gemini.model = 'gemini-2.0-flash';
+      this.gemini.model = 'gemini-flash-latest';
     }
   }
 
