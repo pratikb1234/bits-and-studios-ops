@@ -164,7 +164,7 @@ class ChatPanel {
     // Clear messages and greet with new persona voice
     this.messages = [];
     this.data.saveChatHistory([]);
-    this.msgCont.innerHTML = '';
+    this._clearMessages();
     this._addPersonaGreeting();
 
     window.app?.showToast(`Switched to ${persona.name} — ${persona.title}`, 'success');
@@ -296,16 +296,29 @@ ${recentLines}
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
+  // Clear messages without destroying the typingIndicator DOM node
+  _clearMessages() {
+    Array.from(this.msgCont.children).forEach(child => {
+      if (child !== this.typingIndicator) child.remove();
+    });
+    // Ensure typingIndicator is still inside msgCont
+    if (!this.msgCont.contains(this.typingIndicator)) {
+      this.msgCont.appendChild(this.typingIndicator);
+    }
+  }
+
   render() {
     const hasKey = this._hasKey;
     this.apiKeyPrompt?.classList.toggle('hidden', hasKey);
     this.msgCont.style.display = hasKey ? 'flex' : 'none';
 
-    if (hasKey && !this.messages.length) {
-      this.msgCont.innerHTML = '';
-      this._addPersonaGreeting();
-    } else if (hasKey) {
-      this.messages.forEach(m => this._addMsgToUI(m));
+    if (hasKey) {
+      this._clearMessages();
+      if (!this.messages.length) {
+        this._addPersonaGreeting();
+      } else {
+        this.messages.forEach(m => this._addMsgToUI(m));
+      }
     }
     this.scrollToBottom();
   }
@@ -420,6 +433,10 @@ ${recentLines}
         ${html}${badge}
       </div>
     `;
+    // Guard: re-attach typingIndicator if it was somehow removed
+    if (!this.msgCont.contains(this.typingIndicator)) {
+      this.msgCont.appendChild(this.typingIndicator);
+    }
     this.msgCont.insertBefore(div, this.typingIndicator);
   }
 
