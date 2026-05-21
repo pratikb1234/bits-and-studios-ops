@@ -2,35 +2,56 @@
 
 class App {
   constructor() {
-    this.data = new MindMapData();
-    
-    // Try to load existing data, else init defaults
-    if (!this.data.load()) {
-      this.data.initDefaults();
-    }
-    
-    // Init components
-    this.mindMap = new MindMap('mindmap-container', this.data);
-    this.sidebar  = new Sidebar(this.data);
-    this.chat     = new ChatPanel(this.data);
-    this.meeting  = new MeetingProcessor(this.data, new GeminiAPI());
-    this.history  = new HistoryLog(this.data);
-    this.history.hookDataLayer();
-    this.docs     = new DocsPanel(this.data, new GeminiAPI());
-    this.search   = new SearchOverlay(this.data, this.mindMap);
-    // Expose search globally for inline onclick handlers
+    // ⚡ Set window.app FIRST so buttons always work even if a module fails
     window.app = this;
-    // Update docs Gemini key when settings change
-    const savedKey = (this.data.getSettings().geminiApiKey || this.data.getSettings().anthropicApiKey || '');
-    if (savedKey) this.docs.gemini.setApiKey(savedKey);
+
+    this.data = new MindMapData();
+    if (!this.data.load()) this.data.initDefaults();
+
+    // Expose globals early
+    window.showToast = (msg, type) => this.showToast(msg, type);
+    window.DB = this.data;
+
+    // Init each module with individual fault isolation
+    this._initModule('mindMap', () => new MindMap('mindmap-container', this.data));
+    this._initModule('sidebar',  () => new Sidebar(this.data));
+    this._initModule('chat',     () => new ChatPanel(this.data));
+    this._initModule('meeting',  () => new MeetingProcessor(this.data, new GeminiAPI()));
+    this._initModule('history',  () => new HistoryLog(this.data));
+    this._initModule('docs',     () => new DocsPanel(this.data, new GeminiAPI()));
+    this._initModule('search',   () => new SearchOverlay(this.data, this.mindMap));
+
+    if (this.history) this.history.hookDataLayer();
+
+    // Sync saved API key to all modules
+    try {
+      const savedKey = this.data.getSettings().geminiApiKey || this.data.getSettings().anthropicApiKey || '';
+      if (savedKey) {
+        if (this.docs)    this.docs.gemini.setApiKey(savedKey);
+        if (this.meeting) this.meeting.api.setApiKey(savedKey);
+        if (this.chat)    this.chat.api.setApiKey(savedKey);
+      }
+    } catch(e) { console.warn('[App] Key sync error:', e.message); }
 
     this.bindEvents();
     this.updateStats();
 
-    // Expose showToast globally for other modules
-    window.showToast = (msg, type) => this.showToast(msg, type);
-    // Expose DB for collab-sync
-    window.DB = this.data;
+    console.log('[App] ✅ Initialized. Modules:', 
+      ['mindMap','sidebar','chat','meeting','history','docs','search']
+        .map(k => `${k}:${this[k] ? '✓' : '✗'}`).join(' '));
+  }
+
+  _initModule(name, factory) {
+    try {
+      this[name] = factory();
+    } catch(err) {
+      console.error(`[App] ❌ ${name} failed to init:`, err);
+      this[name] = null;
+      // Show a visible but non-blocking error
+      setTimeout(() => {
+        this.showToast(`⚠️ Module "${name}" failed: ${err.message}`, 'error');
+      }, 1000);
+    }
   }
 
   bindEvents() {
