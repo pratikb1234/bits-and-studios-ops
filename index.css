@@ -2401,3 +2401,124 @@ body::before {
   .docs-editor-header { flex-wrap: wrap; }
   .doc-title-input { font-size: 15px; }
 }
+
+/* ─── AI Persona System ──────────────────────────────────────────────────────*/
+.chat-persona-bar {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+  scrollbar-width: none;
+  flex-shrink: 0;
+}
+.chat-persona-bar::-webkit-scrollbar { display: none; }
+
+.persona-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 40px;
+  border: 1.5px solid var(--border-subtle);
+  background: var(--bg-primary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.18s;
+  font-family: inherit;
+  flex-shrink: 0;
+}
+.persona-chip:hover {
+  border-color: var(--primary);
+  background: rgba(255, 102, 0, 0.04);
+  transform: translateY(-1px);
+}
+.persona-chip.active {
+  border-color: transparent;
+  background: linear-gradient(var(--bg-primary), var(--bg-primary)) padding-box,
+              var(--persona-gradient, linear-gradient(135deg, #4f46e5, #7c3aed)) border-box;
+  border: 1.5px solid transparent;
+  box-shadow: 0 2px 12px rgba(79, 70, 229, 0.2);
+}
+.persona-chip-avatar {
+  font-size: 16px;
+  line-height: 1;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-surface);
+  flex-shrink: 0;
+}
+.persona-chip-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.persona-chip-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1;
+}
+.persona-chip-role {
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1;
+}
+
+/* Chat avatar updated per-persona via inline gradient */
+.chat-ai-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  flex-shrink: 0;
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  transition: background 0.3s;
+}
+
+/* Persona name above AI bubble */
+.msg-persona-name {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 5px;
+}
+
+/* Message avatar gradient support */
+.chat-message.assistant .msg-avatar {
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  transition: background 0.3s;
+}
+
+/* Inline code in chat messages */
+.msg-bubble code {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  color: var(--primary);
+}
+
+/* Map actions badge */
+.msg-actions-badge {
+  margin-top: 10px;
+  padding: 6px 10px;
+  background: linear-gradient(135deg, rgba(79,70,229,0.08), rgba(124,58,237,0.08));
+  border: 1px solid rgba(79,70,229,0.2);
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #4f46e5;
+}

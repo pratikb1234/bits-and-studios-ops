@@ -11,18 +11,34 @@ class GeminiAPI {
   setModel(model) { this.model = model; }
 
   async sendMessage(messages, systemPrompt) {
-    if (!this.apiKey) throw new Error('Gemini API Key is missing. Add it in ⚙️ Settings.');
+    if (!this.apiKey) throw new Error('No Gemini API key set. Add it in ⚙️ Settings (key starts with AIza...).');
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
 
-    // Convert messages to Gemini format (role: 'user' | 'model')
-    const contents = messages.map(m => ({
+    // Gemini requires STRICTLY alternating user/model turns.
+    // Merge consecutive same-role messages to fix any ordering issues.
+    const rawContents = messages.map(m => ({
       role:  m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }],
+      parts: [{ text: m.content || '' }],
     }));
 
+    // Collapse consecutive same-role turns into one
+    const contents = rawContents.reduce((acc, cur) => {
+      if (acc.length && acc[acc.length - 1].role === cur.role) {
+        acc[acc.length - 1].parts[0].text += '\n' + cur.parts[0].text;
+      } else {
+        acc.push(cur);
+      }
+      return acc;
+    }, []);
+
+    // Must start with user turn
+    if (!contents.length || contents[0].role !== 'user') {
+      contents.unshift({ role: 'user', parts: [{ text: '(Start of conversation)' }] });
+    }
+
     const body = {
-      systemInstruction: { parts: [{ text: systemPrompt }] },
+      ...(systemPrompt ? { systemInstruction: { parts: [{ text: systemPrompt }] } } : {}),
       contents,
       generationConfig: {
         temperature:     0.7,
@@ -31,20 +47,28 @@ class GeminiAPI {
       },
     };
 
+    console.log('[Gemini] Sending to model:', this.model, '| messages:', contents.length);
+
     const response = await fetch(url, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify(body),
     });
 
+    const data = await response.json();
+
     if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
-      throw new Error(err.error?.message || `Gemini API error ${response.status}`);
+      const errMsg = data.error?.message || JSON.stringify(data.error) || `HTTP ${response.status}`;
+      console.error('[Gemini] API error:', data);
+      throw new Error(errMsg);
     }
 
-    const data = await response.json();
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error('Empty response from Gemini');
+    if (!text) {
+      console.error('[Gemini] Empty response:', data);
+      const reason = data.candidates?.[0]?.finishReason;
+      throw new Error(reason === 'SAFETY' ? 'Response blocked by safety filter. Try rephrasing.' : 'Empty response from Gemini');
+    }
     return text;
   }
 

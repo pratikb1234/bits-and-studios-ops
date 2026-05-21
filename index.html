@@ -264,20 +264,26 @@ Decided: Launch event on June 1st confirmed."></textarea>
         </div>
       </aside>
 
-      <!-- Claude Chat Panel (Right) -->
+      <!-- AI Chat Panel (Right) -->
       <aside id="chat-panel" class="panel hidden">
         <div class="chat-header">
           <div class="chat-header-left">
-            <div class="chat-ai-avatar">✨</div>
+            <div class="chat-ai-avatar" id="chat-persona-avatar">✨</div>
             <div>
-              <h3>Gemini Advisor</h3>
-              <div class="chat-subtitle">AI Strategic Assistant</div>
+              <h3 id="chat-persona-name">Gemini</h3>
+              <div class="chat-subtitle" id="chat-persona-title">Strategic Advisor · Full context</div>
             </div>
           </div>
           <button id="close-chat" class="chat-toggle">✕</button>
         </div>
-        
+
+        <!-- Persona Selector Bar -->
+        <div id="chat-persona-bar" class="chat-persona-bar">
+          <!-- Filled by JS -->
+        </div>
+
         <!-- API Key Prompt State -->
+
         <div id="api-key-prompt" class="api-key-prompt">
           <div class="key-icon">🔑</div>
           <h4>Claude API Key Required</h4>
