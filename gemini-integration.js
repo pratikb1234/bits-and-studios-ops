@@ -2,7 +2,7 @@
 // Replaces Claude — uses Google Gemini 1.5 Flash (fast, free tier available)
 
 class GeminiAPI {
-  constructor(apiKey, model = 'gemini-flash-latest') {
+  constructor(apiKey, model = 'gemini-3.1-pro') {
     this.apiKey = apiKey;
     this.model  = model;
   }
