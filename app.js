@@ -11,17 +11,21 @@ class App {
     
     // Init components
     this.mindMap = new MindMap('mindmap-container', this.data);
-    this.sidebar = new Sidebar(this.data);
-    this.chat    = new ChatPanel(this.data);
-    this.meeting = new MeetingProcessor(this.data, new ClaudeAPI());
-    
+    this.sidebar  = new Sidebar(this.data);
+    this.chat     = new ChatPanel(this.data);
+    this.meeting  = new MeetingProcessor(this.data, new ClaudeAPI());
+    this.history  = new HistoryLog(this.data);
+    this.history.hookDataLayer();
+
     this.bindEvents();
     this.updateStats();
 
     // Expose showToast globally for other modules
     window.showToast = (msg, type) => this.showToast(msg, type);
+    // Expose DB for collab-sync
+    window.DB = this.data;
   }
-  
+
   bindEvents() {
     // Data changes -> Update UI
     this.data.onChange((type, payload) => {
@@ -119,6 +123,42 @@ class App {
         document.getElementById('mtg-tab-history').classList.toggle('hidden', target !== 'history');
         if (target === 'history') this.meeting._renderHistory();
       });
+    });
+
+    // ── History Panel ───────────────────────────────────────────────────
+    document.getElementById('tb-history').addEventListener('click', () => this.history.toggle());
+    document.getElementById('close-history').addEventListener('click', () => this.history.close());
+
+    // ── Mobile Hamburger ───────────────────────────────────────────
+    const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+    const toolbarActions = document.getElementById('toolbar-actions');
+    const toolbarStats   = document.querySelector('.toolbar-stats');
+    const mobileOverlay  = document.getElementById('mobile-overlay');
+
+    const closeMobileMenu = () => {
+      toolbarActions.classList.remove('mobile-open');
+      toolbarStats?.classList.remove('mobile-open');
+      mobileOverlay.classList.remove('visible');
+      mobileMenuBtn.textContent = '☰';
+    };
+
+    mobileMenuBtn.addEventListener('click', () => {
+      const isOpen = toolbarActions.classList.contains('mobile-open');
+      if (isOpen) {
+        closeMobileMenu();
+      } else {
+        toolbarActions.classList.add('mobile-open');
+        toolbarStats?.classList.add('mobile-open');
+        mobileOverlay.classList.add('visible');
+        mobileMenuBtn.textContent = '✕';
+      }
+    });
+
+    mobileOverlay.addEventListener('click', closeMobileMenu);
+
+    // Close mobile menu when any panel-opening action is triggered
+    ['tb-add-node','tb-zoom-in','tb-zoom-out','tb-zoom-fit','tb-history','tb-export','tb-import','tb-settings'].forEach(id => {
+      document.getElementById(id)?.addEventListener('click', closeMobileMenu);
     });
 
     // Modal closes

@@ -26,45 +26,50 @@
       
       <div class="toolbar-divider"></div>
       
-      <div class="toolbar-actions">
+      <!-- Mobile hamburger -->
+      <button id="mobile-menu-btn" class="mobile-menu-btn" aria-label="Menu">☰</button>
+
+      <div class="toolbar-actions" id="toolbar-actions">
         <button id="tb-add-node" class="toolbar-btn primary">
-          <span class="btn-icon">➕</span> Add Node
+          <span class="btn-icon">➕</span> <span class="btn-label">Add Node</span>
         </button>
-        <button id="tb-meeting" class="toolbar-btn accent" title="Process Meeting Transcript">
-          <span class="btn-icon">📋</span> Meeting
+        <!-- Meeting & Claude AI — hidden until enabled -->
+        <button id="tb-meeting" class="toolbar-btn accent" title="Process Meeting Transcript" style="display:none">
+          <span class="btn-icon">📋</span> <span class="btn-label">Meeting</span>
         </button>
-        <button id="tb-zoom-in" class="toolbar-btn" title="Zoom In">
-          <span class="btn-icon">🔍+</span>
-        </button>
-        <button id="tb-zoom-out" class="toolbar-btn" title="Zoom Out">
-          <span class="btn-icon">🔍-</span>
-        </button>
-        <button id="tb-zoom-fit" class="toolbar-btn" title="Fit to Screen">
-          <span class="btn-icon">👁️</span>
-        </button>
+        <button id="tb-zoom-in" class="toolbar-btn" title="Zoom In">🔍+</button>
+        <button id="tb-zoom-out" class="toolbar-btn" title="Zoom Out">🔍−</button>
+        <button id="tb-zoom-fit" class="toolbar-btn" title="Fit to Screen">⊡</button>
       </div>
-      
+
       <div class="toolbar-stats">
         <div class="stat-badge">
-          Tasks <span id="stat-total-tasks" class="stat-value">0</span>
+          <span class="stat-label">Tasks</span>
+          <span id="stat-total-tasks" class="stat-value">0</span>
         </div>
         <div class="stat-badge">
-          Coverage 
+          <span class="stat-label">Done</span>
           <span id="stat-completion-pct" class="stat-value">0%</span>
           <svg class="coverage-ring" viewBox="0 0 24 24">
             <circle class="bg" cx="12" cy="12" r="10"></circle>
             <circle class="fg" cx="12" cy="12" r="10" stroke-dasharray="62.83" stroke-dashoffset="62.83"></circle>
           </svg>
         </div>
-        
+
         <div class="toolbar-divider" style="margin: 0 8px;"></div>
-        
-        <button id="tb-export" class="toolbar-btn" title="Export JSON">📥 Export</button>
-        <button id="tb-import" class="toolbar-btn" title="Import JSON">📤 Import</button>
+
+        <!-- History button with badge -->
+        <button id="tb-history" class="toolbar-btn" title="Version History">
+          🕓 <span class="btn-label">History</span>
+          <span id="history-badge" class="history-badge" style="display:none">0</span>
+        </button>
+
+        <button id="tb-export" class="toolbar-btn tb-icon-only" title="Export JSON">📥</button>
+        <button id="tb-import" class="toolbar-btn tb-icon-only" title="Import JSON">📤</button>
         <input type="file" id="import-file-input" class="hidden" accept=".json">
-        
-        <button id="tb-settings" class="toolbar-btn" title="Settings">⚙️</button>
-        <button id="toggle-chat" class="toolbar-btn" title="AI Chat">🤖 Claude AI</button>
+        <button id="tb-settings" class="toolbar-btn tb-icon-only" title="Settings">⚙️</button>
+        <!-- Claude AI hidden until enabled -->
+        <button id="toggle-chat" class="toolbar-btn" title="AI Chat" style="display:none">🤖 Claude AI</button>
       </div>
 
       <!-- Live Presence Bar -->
@@ -235,6 +240,23 @@ Decided: Launch event on June 1st confirmed."></textarea>
       <!-- Interactive Mind Map (Center) -->
       <div id="mindmap-container"></div>
 
+      <!-- Version History Panel (Right) -->
+      <aside id="history-panel" class="panel hidden history-panel">
+        <div class="history-header">
+          <div class="history-header-left">
+            <div class="history-icon">🕓</div>
+            <div>
+              <h3>Version History</h3>
+              <div class="history-subtitle">Who changed what and when</div>
+            </div>
+          </div>
+          <button id="close-history" class="sidebar-close">✕</button>
+        </div>
+        <div class="history-entries-wrap">
+          <div id="history-entries" class="history-entries"></div>
+        </div>
+      </aside>
+
       <!-- Claude Chat Panel (Right) -->
       <aside id="chat-panel" class="panel hidden">
         <div class="chat-header">
@@ -331,6 +353,9 @@ Decided: Launch event on June 1st confirmed."></textarea>
   <!-- Peer Cursors Container -->
   <div id="peer-cursors"></div>
 
+  <!-- Mobile nav overlay -->
+  <div id="mobile-overlay" class="mobile-overlay hidden"></div>
+
   <!-- Application Scripts -->
   <script src="data.js"></script>
   <script src="collab-sync.js"></script>
@@ -339,6 +364,7 @@ Decided: Launch event on June 1st confirmed."></textarea>
   <script src="claude-integration.js"></script>
   <script src="chat.js"></script>
   <script src="meeting.js"></script>
+  <script src="history.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
