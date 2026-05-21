@@ -17,6 +17,9 @@ class App {
     this.history  = new HistoryLog(this.data);
     this.history.hookDataLayer();
     this.docs     = new DocsPanel(this.data, new GeminiAPI());
+    this.search   = new SearchOverlay(this.data, this.mindMap);
+    // Expose search globally for inline onclick handlers
+    window.app = this;
     // Update docs Gemini key when settings change
     const savedKey = (this.data.getSettings().geminiApiKey || this.data.getSettings().anthropicApiKey || '');
     if (savedKey) this.docs.gemini.setApiKey(savedKey);

@@ -44,9 +44,13 @@
         <button id="tb-docs" class="toolbar-btn" title="Bezos-Style Memos & Documents">
           <span class="btn-icon">📄</span> <span class="btn-label">Docs</span>
         </button>
-        <button id="tb-zoom-in" class="toolbar-btn" title="Zoom In">🔍+</button>
-        <button id="tb-zoom-out" class="toolbar-btn" title="Zoom Out">🔍−</button>
-        <button id="tb-zoom-fit" class="toolbar-btn" title="Fit to Screen">⊡</button>
+        <button id="tb-zoom-in"  class="toolbar-btn tb-icon-only" title="Zoom In (Scroll up)">+</button>
+        <button id="tb-zoom-out" class="toolbar-btn tb-icon-only" title="Zoom Out (Scroll down)">−</button>
+        <button id="tb-zoom-fit" class="toolbar-btn tb-icon-only" title="Fit to Screen">⊡</button>
+        <button id="tb-search"   class="toolbar-btn search-btn" title="Search nodes (Ctrl+F or /)"
+                onclick="window.app?.search?.toggle()">
+          <span class="btn-icon">🔍</span> <span class="btn-label">Search</span>
+        </button>
       </div>
 
       <div class="toolbar-stats">
@@ -284,21 +288,22 @@ Decided: Launch event on June 1st confirmed."></textarea>
 
         <!-- API Key Prompt State -->
 
-        <div id="api-key-prompt" class="api-key-prompt">
+        <!-- API Key Prompt (hidden by default, shown by JS if no key) -->
+        <div id="api-key-prompt" class="api-key-prompt hidden">
           <div class="key-icon">🔑</div>
-          <h4>Claude API Key Required</h4>
-          <p>To use the AI strategic advisor, you need to provide an Anthropic API key. This is stored securely in your browser's local storage.</p>
+          <h4>Gemini API Key Required</h4>
+          <p>Get a free key at <a href="https://aistudio.google.com" target="_blank">aistudio.google.com</a> → Create API Key. Paste it in ⚙️ Settings.</p>
           <div class="api-key-input-group">
-            <input type="password" id="api-key-input" placeholder="sk-ant-...">
+            <input type="password" id="api-key-input" placeholder="AIza...">
             <button id="save-api-key">Save</button>
           </div>
         </div>
 
-        <!-- Chat State -->
+        <!-- Chat Messages -->
+        <div id="chat-status-bar" class="chat-status-bar"></div>
         <div id="chat-messages" class="chat-messages">
-          <!-- Messages inserted here -->
           <div id="chat-typing" class="chat-typing hidden">
-            <div class="msg-avatar">🤖</div>
+            <div class="msg-avatar" style="background:linear-gradient(135deg,#4f46e5,#7c3aed)">✨</div>
             <div class="typing-dots">
               <div class="typing-dot"></div>
               <div class="typing-dot"></div>
@@ -306,13 +311,13 @@ Decided: Launch event on June 1st confirmed."></textarea>
             </div>
           </div>
         </div>
-        
+
         <div class="chat-input-area">
           <div class="chat-input-wrapper">
-            <textarea id="chat-input" placeholder="Ask Gemini to analyze gaps, suggest strategies, or add tasks to your map..."></textarea>
+            <textarea id="chat-input" placeholder="Ask Gemini anything about Bits & Studios..."></textarea>
             <button id="chat-send" disabled>↑</button>
           </div>
-          <div class="chat-hint">Gemini can automatically modify your mind map.</div>
+          <div class="chat-hint" id="chat-hint-text">Press Enter to send · Gemini knows all your tasks and documents</div>
         </div>
       </aside>
       
@@ -322,8 +327,28 @@ Decided: Launch event on June 1st confirmed."></textarea>
   <!-- Context Menu -->
   <div id="context-menu" class="hidden"></div>
   
-  <!-- Toasts -->
+  <!-- Toast Container -->
   <div id="toast-container"></div>
+
+  <!-- ── Search Overlay ──────────────────────────────────────────────────── -->
+  <div id="search-overlay" class="search-overlay hidden" onclick="if(event.target===this)window.app?.search?.close()">
+    <div class="search-modal">
+      <div class="search-bar">
+        <span class="search-icon">🔍</span>
+        <input id="search-input-field"
+               class="search-input"
+               placeholder="Search tasks, departments, assignees…"
+               autocomplete="off"
+               oninput="window.app?.search?._query(this.value)">
+        <kbd class="search-esc" onclick="window.app?.search?.close()">Esc</kbd>
+      </div>
+      <div class="search-meta">
+        <span id="search-result-count" class="search-count">Showing priority tasks</span>
+        <span class="search-shortcuts">↑↓ navigate &nbsp;·&nbsp; Enter to go &nbsp;·&nbsp; Esc close</span>
+      </div>
+      <div id="search-results-list" class="search-results-list"></div>
+    </div>
+  </div>
   
   <!-- Settings Modal -->
   <div id="settings-modal" class="modal-overlay hidden">
@@ -441,6 +466,7 @@ Decided: Launch event on June 1st confirmed."></textarea>
   <script src="meeting.js"></script>
   <script src="history.js"></script>
   <script src="docs.js"></script>
+  <script src="search.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
