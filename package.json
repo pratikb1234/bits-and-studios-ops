@@ -7,11 +7,18 @@
     "start": "node server.js",
     "dev": "node server.js"
   },
-  "keywords": ["mindmap", "collaboration", "real-time", "makerspace"],
+  "keywords": [
+    "mindmap",
+    "collaboration",
+    "real-time",
+    "makerspace"
+  ],
   "author": "Pratik Bhatt",
   "license": "MIT",
   "dependencies": {
     "express": "^4.18.2",
+    "multer": "^2.1.1",
+    "nodemailer": "^8.0.7",
     "socket.io": "^4.7.4"
   }
 }

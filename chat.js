@@ -13,7 +13,7 @@ class ChatPanel {
     this.saveKeyBtn = document.getElementById('save-api-key');
     
     this.settings = this.data.getSettings();
-    this.api = new ClaudeAPI(this.settings.anthropicApiKey || '');
+    this.api = new GeminiAPI(this.settings.geminiApiKey || this.settings.anthropicApiKey || '');
     this.messages = this.data.getChatHistory();
     
     this.bindEvents();
@@ -50,7 +50,7 @@ class ChatPanel {
     this.saveKeyBtn.addEventListener('click', () => {
        const key = this.apiKeyInput.value.trim();
        if (key) {
-         this.settings.anthropicApiKey = key;
+         this.settings.geminiApiKey = key;
          this.data.saveSettings(this.settings);
          this.api.setApiKey(key);
          this.render();
@@ -59,7 +59,8 @@ class ChatPanel {
   }
 
   render() {
-    if (!this.settings.anthropicApiKey) {
+    const hasKey = !!(this.settings.geminiApiKey || this.settings.anthropicApiKey);
+    if (!hasKey) {
       this.apiKeyPrompt.classList.remove('hidden');
       this.messagesContainer.style.display = 'none';
       this.inputField.parentElement.style.display = 'none';
@@ -73,7 +74,7 @@ class ChatPanel {
         // Initial greeting
         this.addMessageToUI({
           role: 'assistant',
-          content: 'Hi! I am your AI assistant for Bits & Studios. I can help you brainstorm strategies, find gaps in your plan, and automatically add tasks to your mind map. What would you like to work on?'
+          content: 'Hi! I am Gemini, your AI advisor for Bits & Studios. I can help you brainstorm strategies, find gaps in your plan, and automatically add tasks to your mind map. What would you like to work on?'
         });
       } else {
         this.messages.forEach(msg => this.addMessageToUI(msg));
@@ -115,7 +116,8 @@ class ChatPanel {
 
   async handleSend() {
     const text = this.inputField.value.trim();
-    if (!text || !this.settings.anthropicApiKey) return;
+    const hasKey = !!(this.settings.geminiApiKey || this.settings.anthropicApiKey);
+    if (!text || !hasKey) return;
 
     // Clear input
     this.inputField.value = '';

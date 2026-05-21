@@ -13,9 +13,13 @@ class App {
     this.mindMap = new MindMap('mindmap-container', this.data);
     this.sidebar  = new Sidebar(this.data);
     this.chat     = new ChatPanel(this.data);
-    this.meeting  = new MeetingProcessor(this.data, new ClaudeAPI());
+    this.meeting  = new MeetingProcessor(this.data, new GeminiAPI());
     this.history  = new HistoryLog(this.data);
     this.history.hookDataLayer();
+    this.docs     = new DocsPanel(this.data, new GeminiAPI());
+    // Update docs Gemini key when settings change
+    const savedKey = (this.data.getSettings().geminiApiKey || this.data.getSettings().anthropicApiKey || '');
+    if (savedKey) this.docs.gemini.setApiKey(savedKey);
 
     this.bindEvents();
     this.updateStats();
@@ -125,7 +129,10 @@ class App {
       });
     });
 
-    // ── History Panel ───────────────────────────────────────────────────
+    // ── Docs Panel ─────────────────────────────────────────────
+    document.getElementById('tb-docs').addEventListener('click', () => this.docs.toggle());
+
+    // ── History Panel ─────────────────────────────────────────────────
     document.getElementById('tb-history').addEventListener('click', () => this.history.toggle());
     document.getElementById('close-history').addEventListener('click', () => this.history.close());
 
@@ -193,9 +200,12 @@ class App {
   showSettingsModal() {
     const modal = document.getElementById('settings-modal');
     modal.classList.remove('hidden');
-    
+
     const settings = this.data.getSettings();
-    document.getElementById('setting-api-key').value = settings.anthropicApiKey || '';
+    document.getElementById('setting-api-key').value       = settings.geminiApiKey || settings.anthropicApiKey || '';
+    document.getElementById('setting-gmail-user').value    = settings.gmailUser    || '';
+    document.getElementById('setting-gmail-pass').value    = settings.gmailPass    || '';
+    document.getElementById('setting-google-client-id').value = settings.googleClientId || '';
     
     const team = this.data.getTeam();
     document.getElementById('setting-team').value = team.join(', ');
@@ -206,19 +216,39 @@ class App {
     saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
     
     newSaveBtn.addEventListener('click', () => {
-      const apiKey = document.getElementById('setting-api-key').value.trim();
-      const teamStr = document.getElementById('setting-team').value;
-      
-      this.data.saveSettings({ ...settings, anthropicApiKey: apiKey });
-      this.chat.api.setApiKey(apiKey);
+      const apiKey      = document.getElementById('setting-api-key').value.trim();
+      const gmailUser   = document.getElementById('setting-gmail-user').value.trim();
+      const gmailPass   = document.getElementById('setting-gmail-pass').value.trim();
+      const googleId    = document.getElementById('setting-google-client-id').value.trim();
+      const teamStr     = document.getElementById('setting-team').value;
+
+      const newSettings = { ...settings, geminiApiKey: apiKey, gmailUser, gmailPass, googleClientId: googleId };
+      this.data.saveSettings(newSettings);
+
+      // Update live API instances
+      if (apiKey) {
+        this.chat.api.setApiKey(apiKey);
+        this.docs.gemini.setApiKey(apiKey);
+        this.meeting.api.setApiKey(apiKey);
+      }
+      this.chat.settings = newSettings;
       this.chat.render();
-      
-      const teamArr = teamStr.split(',').map(s => s.trim()).filter(s => s);
+
+      // Persist Gmail creds to server
+      if (gmailUser || gmailPass) {
+        fetch('/api/email-settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ emailUser: gmailUser, emailPass: gmailPass }),
+        }).catch(() => {});
+      }
+
+      const teamArr = teamStr.split(',').map(s => s.trim()).filter(Boolean);
       this.data.saveTeam(teamArr);
       if (this.sidebar) this.sidebar.refreshTeamList();
-      
+
       modal.classList.add('hidden');
-      this.showToast('Settings saved successfully', 'success');
+      this.showToast('✅ Settings saved', 'success');
     });
   }
   

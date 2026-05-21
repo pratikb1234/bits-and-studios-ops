@@ -7,9 +7,12 @@
   
   <!-- D3.js -->
   <script src="https://d3js.org/d3.v7.min.js"></script>
-  
-  <!-- Socket.io Client (loaded from our own server) -->
+
+  <!-- Socket.io Client -->
   <script src="/socket.io/socket.io.js"></script>
+
+  <!-- Google Identity Services (for Drive OAuth) -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
 
   <!-- App Styles -->
   <link rel="stylesheet" href="index.css">
@@ -33,9 +36,13 @@
         <button id="tb-add-node" class="toolbar-btn primary">
           <span class="btn-icon">➕</span> <span class="btn-label">Add Node</span>
         </button>
-        <!-- Meeting & Claude AI — hidden until enabled -->
-        <button id="tb-meeting" class="toolbar-btn accent" title="Process Meeting Transcript" style="display:none">
+        <!-- Meeting -->
+        <button id="tb-meeting" class="toolbar-btn accent" title="Process Meeting / Recording">
           <span class="btn-icon">📋</span> <span class="btn-label">Meeting</span>
+        </button>
+        <!-- Docs -->
+        <button id="tb-docs" class="toolbar-btn" title="Bezos-Style Memos & Documents">
+          <span class="btn-icon">📄</span> <span class="btn-label">Docs</span>
         </button>
         <button id="tb-zoom-in" class="toolbar-btn" title="Zoom In">🔍+</button>
         <button id="tb-zoom-out" class="toolbar-btn" title="Zoom Out">🔍−</button>
@@ -58,18 +65,18 @@
 
         <div class="toolbar-divider" style="margin: 0 8px;"></div>
 
-        <!-- History button with badge -->
-        <button id="tb-history" class="toolbar-btn" title="Version History">
-          🕓 <span class="btn-label">History</span>
-          <span id="history-badge" class="history-badge" style="display:none">0</span>
+        <!-- Gemini AI Chat -->
+        <button id="toggle-chat" class="toolbar-btn" title="Gemini AI Chat">✨ <span class="btn-label">Gemini AI</span></button>
+
+        <!-- History -->
+        <button id="tb-history" class="toolbar-btn tb-icon-only" title="Version History">
+          🕓 <span id="history-badge" class="history-badge" style="display:none">0</span>
         </button>
 
         <button id="tb-export" class="toolbar-btn tb-icon-only" title="Export JSON">📥</button>
         <button id="tb-import" class="toolbar-btn tb-icon-only" title="Import JSON">📤</button>
         <input type="file" id="import-file-input" class="hidden" accept=".json">
         <button id="tb-settings" class="toolbar-btn tb-icon-only" title="Settings">⚙️</button>
-        <!-- Claude AI hidden until enabled -->
-        <button id="toggle-chat" class="toolbar-btn" title="AI Chat" style="display:none">🤖 Claude AI</button>
       </div>
 
       <!-- Live Presence Bar -->
@@ -263,7 +270,7 @@ Decided: Launch event on June 1st confirmed."></textarea>
           <div class="chat-header-left">
             <div class="chat-ai-avatar">✨</div>
             <div>
-              <h3>Claude Advisor</h3>
+              <h3>Gemini Advisor</h3>
               <div class="chat-subtitle">AI Strategic Assistant</div>
             </div>
           </div>
@@ -296,10 +303,10 @@ Decided: Launch event on June 1st confirmed."></textarea>
         
         <div class="chat-input-area">
           <div class="chat-input-wrapper">
-            <textarea id="chat-input" placeholder="Ask Claude to analyze gaps, suggest strategies, or add tasks..."></textarea>
+            <textarea id="chat-input" placeholder="Ask Gemini to analyze gaps, suggest strategies, or add tasks to your map..."></textarea>
             <button id="chat-send" disabled>↑</button>
           </div>
-          <div class="chat-hint">Claude can automatically modify your mind map.</div>
+          <div class="chat-hint">Gemini can automatically modify your mind map.</div>
         </div>
       </aside>
       
@@ -314,26 +321,88 @@ Decided: Launch event on June 1st confirmed."></textarea>
   
   <!-- Settings Modal -->
   <div id="settings-modal" class="modal-overlay hidden">
-    <div class="modal">
+    <div class="modal" style="max-width:540px">
       <div class="modal-header">
-        <h3>Dashboard Settings</h3>
+        <h3>⚙️ Settings</h3>
         <button class="modal-close">✕</button>
       </div>
       <div class="modal-body">
+
+        <div class="settings-section-title">🤖 Gemini AI</div>
         <div class="field-group">
-          <label class="field-label">Anthropic API Key (Claude)</label>
-          <input type="password" id="setting-api-key" class="field-input" placeholder="sk-ant-api03-...">
-          <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Stored locally. Required for AI chat features.</div>
+          <label class="field-label">Gemini API Key</label>
+          <input type="password" id="setting-api-key" class="field-input" placeholder="AIza...">
+          <div class="field-hint">Get free key at <a href="https://aistudio.google.com" target="_blank">aistudio.google.com</a> → Create API Key</div>
         </div>
+
+        <div class="settings-section-title">👥 Team</div>
         <div class="field-group">
           <label class="field-label">Team Members (comma separated)</label>
-          <textarea id="setting-team" class="field-textarea" placeholder="Alice, Bob, Charlie..."></textarea>
-          <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Used for task assignment dropdowns.</div>
+          <textarea id="setting-team" class="field-textarea" placeholder="Pratik, Anjalee, Rahul..."></textarea>
+          <div class="field-hint">Used for task assignment dropdowns.</div>
         </div>
+
+        <div class="settings-section-title">📧 Email Approvals (for Meeting Tasks)</div>
+        <div class="field-group">
+          <label class="field-label">Gmail Address</label>
+          <input type="email" id="setting-gmail-user" class="field-input" placeholder="yourname@gmail.com">
+        </div>
+        <div class="field-group">
+          <label class="field-label">Gmail App Password</label>
+          <input type="password" id="setting-gmail-pass" class="field-input" placeholder="xxxx xxxx xxxx xxxx">
+          <div class="field-hint">Generate at <a href="https://myaccount.google.com/apppasswords" target="_blank">myaccount.google.com/apppasswords</a> (2FA required)</div>
+        </div>
+
+        <div class="settings-section-title">📁 Google Drive (for Memo Upload)</div>
+        <div class="field-group">
+          <label class="field-label">Google OAuth Client ID</label>
+          <input type="text" id="setting-google-client-id" class="field-input" placeholder="1234567890-abc.apps.googleusercontent.com">
+          <div class="field-hint">Create at <a href="https://console.cloud.google.com" target="_blank">console.cloud.google.com</a> → APIs → Credentials → OAuth Client ID (Web App)</div>
+        </div>
+
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary modal-cancel">Cancel</button>
         <button class="btn btn-primary" id="save-settings">Save Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Docs Overlay -->
+  <div id="docs-overlay" class="docs-overlay hidden">
+    <div class="docs-panel">
+      <!-- List View -->
+      <div id="docs-list-view">
+        <div class="docs-panel-header">
+          <div class="docs-panel-title">
+            <span class="docs-panel-icon">📄</span>
+            <div>
+              <div class="docs-panel-name">Documents</div>
+              <div class="docs-panel-sub">Bezos-style memos · Expert AI generation</div>
+            </div>
+          </div>
+          <button class="sidebar-close" onclick="window.app.docs.close()">✕</button>
+        </div>
+        <div class="docs-templates-label">Create New Document</div>
+        <div id="docs-template-grid" class="docs-template-grid"></div>
+        <div class="docs-templates-label" style="margin-top:20px">Your Documents</div>
+        <div id="docs-doc-list" class="docs-doc-list"></div>
+      </div>
+
+      <!-- Editor View -->
+      <div id="docs-editor-view" class="hidden">
+        <div class="docs-editor-header">
+          <button class="doc-back-btn" onclick="window.app.docs._backToList()">← Back</button>
+          <input id="doc-editor-title-input" class="doc-title-input" type="text" placeholder="Document Title"
+            onchange="window.app.docs.updateTitle(window.app.docs.currentDoc?.id, this.value)">
+          <div class="doc-editor-actions">
+            <button class="toolbar-btn" onclick="window.app.docs.downloadHTML(window.app.docs.currentDoc)">📥 Export</button>
+            <button class="toolbar-btn primary" id="doc-drive-btn"
+              onclick="window.app.docs.uploadToDrive(window.app.docs.currentDoc)">📁 Upload to Drive</button>
+          </div>
+        </div>
+        <div id="doc-editor-meta" class="doc-editor-meta"></div>
+        <div id="doc-sections" class="doc-sections"></div>
       </div>
     </div>
   </div>
@@ -361,10 +430,11 @@ Decided: Launch event on June 1st confirmed."></textarea>
   <script src="collab-sync.js"></script>
   <script src="mindmap.js"></script>
   <script src="sidebar.js"></script>
-  <script src="claude-integration.js"></script>
+  <script src="gemini-integration.js"></script>
   <script src="chat.js"></script>
   <script src="meeting.js"></script>
   <script src="history.js"></script>
+  <script src="docs.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

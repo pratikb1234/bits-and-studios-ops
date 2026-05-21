@@ -118,6 +118,12 @@ class MindMap {
     this.linkGroup = this.g.append('g').attr('class', 'links');
     this.nodeGroup = this.g.append('g').attr('class', 'nodes');
 
+    // Tooltip overlay
+    this._tooltipEl = d3.select(this.container)
+      .append('div')
+      .attr('class', 'node-tooltip hidden');
+    this._tooltipTimer = null;
+
     this.render();
   }
 
@@ -180,6 +186,7 @@ class MindMap {
       .attr('id', d => 'ui-' + d.data.id)
       .on('click', (e, d) => {
         e.stopPropagation();
+        this._hideTooltip();
         this.selectNode(d.data.id);
       })
       .on('dblclick', (e, d) => {
@@ -188,8 +195,20 @@ class MindMap {
       })
       .on('contextmenu', (e, d) => {
         e.preventDefault();
+        this._hideTooltip();
         this.selectNode(d.data.id);
         this.showContextMenu(e, d.data);
+      })
+      .on('mouseenter', (e, d) => {
+        clearTimeout(this._tooltipTimer);
+        this._tooltipTimer = setTimeout(() => this._showTooltip(e, d.data), 650);
+      })
+      .on('mouseleave', () => {
+        clearTimeout(this._tooltipTimer);
+        this._hideTooltip();
+      })
+      .on('mousemove', (e) => {
+        if (!this._tooltipEl.classed('hidden')) this._positionTooltip(e);
       });
 
     // Rect shape
@@ -378,6 +397,52 @@ class MindMap {
       };
       menu.appendChild(btn);
     });
+  }
+  // ── Tooltip ───────────────────────────────────────────────────────────────
+  _showTooltip(event, node) {
+    if (!node || node.id === 'root') return;
+    const statusMap = { not_started: 'Not Started', in_progress: '🔄 In Progress', done: '✅ Done' };
+    const priorityMap = { low: 'Low', medium: 'Medium', high: '🔴 High', critical: '🚨 Critical' };
+    const assignees = (node.assignees || []).join(', ') || '—';
+    const dueDate   = node.dueDate
+      ? new Date(node.dueDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+      : '—';
+    const totalSubs = (node.subtasks || []).length;
+    const doneSubs  = (node.subtasks || []).filter(s => s.done).length;
+    const dept      = node.department && window.DEPARTMENTS?.[node.department]?.name || null;
+
+    this._tooltipEl
+      .classed('hidden', false)
+      .html(`
+        <div class="tt-title">${node.label}</div>
+        ${node.description ? `<div class="tt-desc">${node.description}</div>` : ''}
+        <div class="tt-grid">
+          <div class="tt-row"><span class="tt-key">Status</span><span class="tt-val">${statusMap[node.status] || 'Not Started'}</span></div>
+          <div class="tt-row"><span class="tt-key">Priority</span><span class="tt-val">${priorityMap[node.priority] || 'Medium'}</span></div>
+          ${assignees !== '—' ? `<div class="tt-row"><span class="tt-key">Assigned</span><span class="tt-val">${assignees}</span></div>` : ''}
+          <div class="tt-row"><span class="tt-key">Due</span><span class="tt-val">${dueDate}</span></div>
+          ${dept ? `<div class="tt-row"><span class="tt-key">Dept</span><span class="tt-val">${dept}</span></div>` : ''}
+          ${totalSubs > 0 ? `<div class="tt-row"><span class="tt-key">Subtasks</span><span class="tt-val">${doneSubs}/${totalSubs} done</span></div>` : ''}
+        </div>
+        <div class="tt-hint">Click to open · Right-click for options</div>
+      `);
+    this._positionTooltip(event);
+  }
+
+  _positionTooltip(event) {
+    const rect = this.container.getBoundingClientRect();
+    const tt   = this._tooltipEl.node();
+    let x = event.clientX - rect.left + 18;
+    let y = event.clientY - rect.top  + 18;
+    // Flip if off right edge
+    if (x + tt.offsetWidth  > this.container.clientWidth  - 12) x -= tt.offsetWidth  + 36;
+    // Flip if off bottom edge
+    if (y + tt.offsetHeight > this.container.clientHeight - 12) y -= tt.offsetHeight + 36;
+    this._tooltipEl.style('left', x + 'px').style('top', y + 'px');
+  }
+
+  _hideTooltip() {
+    this._tooltipEl.classed('hidden', true);
   }
 }
 
