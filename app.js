@@ -230,6 +230,13 @@ class App {
         this.chat.api.setApiKey(apiKey);
         this.docs.gemini.setApiKey(apiKey);
         this.meeting.api.setApiKey(apiKey);
+        // Push key to server so /api/chat proxy always has it
+        fetch('/api/save-key', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ geminiApiKey: apiKey }),
+        }).then(() => console.log('[App] Gemini key synced to server'))
+          .catch(e => console.warn('[App] Key sync failed:', e.message));
       }
       this.chat.settings = newSettings;
       this.chat.render();

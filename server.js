@@ -61,6 +61,95 @@ loadFromDisk();
 // { token → { tasks, meetingTitle, assignee, status, createdAt } }
 const pendingApprovals = new Map();
 
+// ── Gemini API key (server-side cache) ───────────────────────────────────────
+let cachedGeminiKey = process.env.GEMINI_API_KEY || '';
+
+// ── /api/save-key — store Gemini key server-side ─────────────────────────────
+app.post('/api/save-key', (req, res) => {
+  const { geminiApiKey } = req.body || {};
+  if (geminiApiKey) {
+    cachedGeminiKey = geminiApiKey;
+    console.log('[Server] Gemini API key updated (length:', geminiApiKey.length, ')');
+    res.json({ ok: true });
+  } else {
+    res.status(400).json({ error: 'No key provided' });
+  }
+});
+
+// ── /api/chat — Gemini proxy (logs everything) ────────────────────────────────
+app.post('/api/chat', async (req, res) => {
+  const { messages, systemPrompt, apiKey, model = 'gemini-1.5-flash' } = req.body || {};
+
+  const key = apiKey || cachedGeminiKey;
+  if (!key) {
+    console.error('[Gemini] /api/chat called with no API key');
+    return res.status(400).json({ error: 'No Gemini API key. Add it in ⚙️ Settings.' });
+  }
+  if (!messages || !messages.length) {
+    return res.status(400).json({ error: 'No messages provided' });
+  }
+
+  // Build Gemini contents — strict alternating user/model turns
+  const rawContents = messages.map(m => ({
+    role:  m.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: m.content || '' }],
+  }));
+
+  const contents = rawContents.reduce((acc, cur) => {
+    if (acc.length && acc[acc.length - 1].role === cur.role) {
+      acc[acc.length - 1].parts[0].text += '\n' + cur.parts[0].text;
+    } else {
+      acc.push(cur);
+    }
+    return acc;
+  }, []);
+
+  if (!contents.length || contents[0].role !== 'user') {
+    contents.unshift({ role: 'user', parts: [{ text: '(start)' }] });
+  }
+
+  const body = {
+    ...(systemPrompt ? { systemInstruction: { parts: [{ text: systemPrompt }] } } : {}),
+    contents,
+    generationConfig: { temperature: 0.7, maxOutputTokens: 4096, topP: 0.95 },
+  };
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+
+  console.log(`[Gemini] → model:${model} | turns:${contents.length} | sysprompt:${systemPrompt ? systemPrompt.length + ' chars' : 'none'}`);
+
+  try {
+    const gRes  = await fetch(url, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+    });
+
+    const data = await gRes.json();
+
+    if (!gRes.ok) {
+      const errMsg = data?.error?.message || `HTTP ${gRes.status}`;
+      console.error('[Gemini] ✗ API error:', errMsg);
+      return res.status(gRes.status).json({ error: errMsg });
+    }
+
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) {
+      const reason = data?.candidates?.[0]?.finishReason || 'unknown';
+      console.error('[Gemini] ✗ Empty response. finishReason:', reason, '| data:', JSON.stringify(data).slice(0, 300));
+      return res.status(500).json({ error: `Empty response (reason: ${reason})` });
+    }
+
+    console.log(`[Gemini] ✓ Got response (${text.length} chars): "${text.slice(0, 80)}..."`);
+    res.json({ text });
+
+  } catch (err) {
+    console.error('[Gemini] ✗ Network error:', err.message);
+    res.status(500).json({ error: 'Network error reaching Gemini: ' + err.message });
+  }
+});
+
+
 // ── Email transport (lazy init) ───────────────────────────────────────────────
 function getMailTransport() {
   if (!nodemailer) return null;
