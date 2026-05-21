@@ -76,9 +76,27 @@ app.post('/api/save-key', (req, res) => {
   }
 });
 
-// ── /api/chat — Gemini proxy (logs everything) ────────────────────────────────
+// ── /api/list-models — list available Gemini models ───────────────────────────
+app.get('/api/list-models', async (req, res) => {
+  const key = req.query.key || cachedGeminiKey;
+  if (!key) return res.status(400).json({ error: 'No API key available. Save one in Settings first.' });
+  try {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+    const data = await r.json();
+    if (!r.ok) return res.status(r.status).json(data);
+    // Filter to only models that support generateContent
+    const models = (data.models || [])
+      .filter(m => m.supportedGenerationMethods?.includes('generateContent'))
+      .map(m => ({ name: m.name.replace('models/', ''), displayName: m.displayName, description: m.description }));
+    res.json({ models });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── /api/chat — Gemini proxy with auto model fallback ─────────────────────────
 app.post('/api/chat', async (req, res) => {
-  const { messages, systemPrompt, apiKey, model = 'gemini-1.5-flash' } = req.body || {};
+  const { messages, systemPrompt, apiKey, model = 'gemini-flash-latest' } = req.body || {};
 
   const key = apiKey || cachedGeminiKey;
   if (!key) {
@@ -111,43 +129,59 @@ app.post('/api/chat', async (req, res) => {
   const body = {
     ...(systemPrompt ? { systemInstruction: { parts: [{ text: systemPrompt }] } } : {}),
     contents,
-    generationConfig: { temperature: 0.7, maxOutputTokens: 4096, topP: 0.95 },
+    generationConfig: { temperature: 0.7, maxOutputTokens: 8192, topP: 0.95 },
   };
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+  // ── Auto-fallback: try requested model, fall back to gemini-flash-latest ──
+  const FALLBACK_MODEL = 'gemini-flash-latest';
+  const modelsToTry = model === FALLBACK_MODEL ? [model] : [model, FALLBACK_MODEL];
 
-  console.log(`[Gemini] → model:${model} | turns:${contents.length} | sysprompt:${systemPrompt ? systemPrompt.length + ' chars' : 'none'}`);
+  for (const tryModel of modelsToTry) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${tryModel}:generateContent?key=${key}`;
+    console.log(`[Gemini] → model:${tryModel} | turns:${contents.length} | sysprompt:${systemPrompt ? systemPrompt.length + ' chars' : 'none'}`);
 
-  try {
-    const gRes  = await fetch(url, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(body),
-    });
+    try {
+      const gRes = await fetch(url, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body),
+      });
 
-    const data = await gRes.json();
+      const data = await gRes.json();
 
-    if (!gRes.ok) {
-      const errMsg = data?.error?.message || `HTTP ${gRes.status}`;
-      console.error('[Gemini] ✗ API error:', errMsg);
-      return res.status(gRes.status).json({ error: errMsg });
+      if (!gRes.ok) {
+        const errMsg = data?.error?.message || `HTTP ${gRes.status}`;
+        const isNotFound = errMsg.includes('not found') || errMsg.includes('not supported');
+
+        if (isNotFound && tryModel !== FALLBACK_MODEL) {
+          console.warn(`[Gemini] ⚠ ${tryModel} not available — falling back to ${FALLBACK_MODEL}`);
+          continue; // try next model
+        }
+
+        console.error('[Gemini] ✗ API error:', errMsg);
+        return res.status(gRes.status).json({ error: errMsg });
+      }
+
+      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) {
+        const reason = data?.candidates?.[0]?.finishReason || 'unknown';
+        console.error('[Gemini] ✗ Empty response. finishReason:', reason);
+        return res.status(500).json({ error: `Empty response (reason: ${reason})` });
+      }
+
+      console.log(`[Gemini] ✓ model:${tryModel} | response: ${text.length} chars`);
+      return res.json({ text, model: tryModel });
+
+    } catch (err) {
+      console.error('[Gemini] ✗ Network error:', err.message);
+      return res.status(500).json({ error: 'Network error reaching Gemini: ' + err.message });
     }
-
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) {
-      const reason = data?.candidates?.[0]?.finishReason || 'unknown';
-      console.error('[Gemini] ✗ Empty response. finishReason:', reason, '| data:', JSON.stringify(data).slice(0, 300));
-      return res.status(500).json({ error: `Empty response (reason: ${reason})` });
-    }
-
-    console.log(`[Gemini] ✓ Got response (${text.length} chars): "${text.slice(0, 80)}..."`);
-    res.json({ text });
-
-  } catch (err) {
-    console.error('[Gemini] ✗ Network error:', err.message);
-    res.status(500).json({ error: 'Network error reaching Gemini: ' + err.message });
   }
+
+  // All models failed
+  return res.status(503).json({ error: 'No available Gemini model could process this request.' });
 });
+
 
 
 // ── Email transport (lazy init) ───────────────────────────────────────────────
