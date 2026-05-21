@@ -209,12 +209,15 @@ class ChatPanel {
 
     const taskLines = Object.entries(byDept).map(([dept, tasks]) =>
       `  [${dept.toUpperCase()}]\n` + tasks.map(t =>
-        `    • [${t.id}] ${t.label} | status: ${t.status || 'not_started'} | priority: ${t.priority || 'medium'}` +
+        `    • ${t.label} | status: ${t.status || 'not_started'} | priority: ${t.priority || 'medium'}` +
         (t.assignees?.length ? ` | assigned: ${t.assignees.join(', ')}` : '') +
         (t.dueDate ? ` | due: ${t.dueDate}` : '') +
         (t.description ? `\n      desc: ${t.description.slice(0, 120)}` : '')
       ).join('\n')
     ).join('\n\n');
+
+    // ID lookup table for map actions only — AI uses internally, never shows to user
+    const idRef = allTasks.map(t => `${t.label} => ${t.id}`).join('\n');
 
     // Tasks assigned to current user
     let myTasksSection = '';
@@ -283,16 +286,23 @@ ${docLines}
 ${recentLines}
 
 ════════════════════════════════════════════
-🎯 RESPONDING
+🔑 NODE ID LOOKUP (use ONLY inside map_actions JSON — NEVER in your text responses)
 ════════════════════════════════════════════
-- Always reference SPECIFIC task names, IDs, and doc titles from above
-- When adding tasks to the map, use <map_actions> JSON tags:
+${idRef}
+
+════════════════════════════════════════════
+🎯 RESPONSE RULES
+════════════════════════════════════════════
+- CRITICAL: NEVER mention node IDs (node_xxx format) in your visible responses. They are internal only.
+- Always refer to tasks by their NAME (e.g. "Outside Signage", never "node_mpfwegz5_3")
+- Reference specific task names, document titles, and real data from above
+- When adding/updating items on the map, use <map_actions> JSON tags:
 <map_actions>
 [{"action": "add_node", "parentId": "PARENT_ID", "label": "Task", "department": "dept", "icon": "emoji", "priority": "high", "assignees": ["Name"]},
  {"action": "update_node", "id": "NODE_ID", "status": "done"}]
 </map_actions>
 - Available departments: marketing, operations, finance, curriculum, technology, community
-- Be direct. Be specific. No generic advice.`;
+- Be direct, specific, and actionable. No filler. No generic advice.`;
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
