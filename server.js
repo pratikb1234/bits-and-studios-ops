@@ -7,6 +7,7 @@ const { Server } = require('socket.io');
 const path     = require('path');
 const fs       = require('fs');
 const crypto   = require('crypto');
+const { AgentJobQueue, SupervisorAgent, AGENT_PERSONAS } = require('./agent-runtime');
 
 const app    = express();
 const server = http.createServer(app);
@@ -63,6 +64,9 @@ const pendingApprovals = new Map();
 
 // ── Gemini API key (server-side cache) ───────────────────────────────────────
 let cachedGeminiKey = process.env.GEMINI_API_KEY || '';
+
+// ── Agent Job Queue (singleton) ──────────────────────────────────────────────
+const agentQueue = new AgentJobQueue();
 
 // ── /api/save-key — store Gemini key server-side ─────────────────────────────
 app.post('/api/save-key', (req, res) => {
@@ -439,7 +443,222 @@ app.post('/api/email-settings', (req, res) => {
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', users: activeUsers.size, nodes: sharedState.nodes?.length ?? 0 });
+  res.json({
+    status: 'ok',
+    users:       activeUsers.size,
+    nodes:       sharedState.nodes?.length ?? 0,
+    activeJobs:  agentQueue.getActiveJobs().length,
+    totalJobs:   agentQueue.getAll().length,
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AGENT ENDPOINTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// POST /api/agent/run — Start an agent job on a task
+app.post('/api/agent/run', async (req, res) => {
+  const { taskId, agentPersona, apiKey } = req.body || {};
+  const key = apiKey || cachedGeminiKey;
+
+  if (!taskId)       return res.status(400).json({ error: 'taskId required' });
+  if (!agentPersona) return res.status(400).json({ error: 'agentPersona required' });
+  if (!key)          return res.status(400).json({ error: 'No API key. Save one in ⚙️ Settings.' });
+  if (!AGENT_PERSONAS[agentPersona]) return res.status(400).json({ error: `Unknown persona: ${agentPersona}` });
+
+  // Find task in server state
+  const allNodes = sharedState.nodes || [];
+  const taskData = allNodes.find(n => n.id === taskId);
+  if (!taskData) return res.status(404).json({ error: `Task ${taskId} not found on server` });
+
+  // Create job
+  const job = agentQueue.create({ taskId, taskData, allNodes, agentPersona, apiKey: key, io });
+
+  // Start async (non-blocking)
+  job.run().catch(err => console.error('[Agent] Unhandled job error:', err));
+
+  // Save agent info to node
+  const nodeIdx = allNodes.findIndex(n => n.id === taskId);
+  if (nodeIdx !== -1) {
+    allNodes[nodeIdx].agent = {
+      ...(allNodes[nodeIdx].agent || {}),
+      persona:   agentPersona,
+      status:    'running',
+      lastJobId: job.jobId,
+      lastRun:   job.createdAt,
+    };
+    saveToDisk();
+    io.emit('node_updated', allNodes[nodeIdx]);
+  }
+
+  console.log(`[Agent] Started job ${job.jobId} | task:${taskData.label} | persona:${agentPersona}`);
+  res.json({ jobId: job.jobId, status: 'running', taskId, agentPersona });
+});
+
+// GET /api/agent/job/:jobId — Full job state + activity log
+app.get('/api/agent/job/:jobId', (req, res) => {
+  const job = agentQueue.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  res.json({
+    jobId:        job.jobId,
+    taskId:       job.taskId,
+    taskLabel:    job.taskData?.label,
+    agentPersona: job.agentPersona,
+    personaName:  AGENT_PERSONAS[job.agentPersona]?.name,
+    status:       job.status,
+    createdAt:    job.createdAt,
+    completedAt:  job.completedAt,
+    summary:      job.summary,
+    turnCount:    job.turnCount,
+    activity:     job.activity,
+    createdDocs:  job.createdDocs,
+  });
+});
+
+// GET /api/agent/jobs — List all jobs (summaries)
+app.get('/api/agent/jobs', (req, res) => {
+  const { taskId } = req.query;
+  let summaries = agentQueue.getSummaries();
+  if (taskId) summaries = summaries.filter(j => j.taskId === taskId);
+  res.json({ jobs: summaries, activeCount: agentQueue.getActiveJobs().length });
+});
+
+// DELETE /api/agent/job/:jobId — Cancel a running job
+app.delete('/api/agent/job/:jobId', (req, res) => {
+  agentQueue.cancel(req.params.jobId);
+  res.json({ ok: true });
+});
+
+// POST /api/agent/chat — Chat with a task-scoped agent
+app.post('/api/agent/chat', async (req, res) => {
+  const { taskId, agentPersona, messages, apiKey } = req.body || {};
+  const key = apiKey || cachedGeminiKey;
+
+  if (!key)    return res.status(400).json({ error: 'No API key' });
+  if (!taskId) return res.status(400).json({ error: 'taskId required' });
+
+  const allNodes = sharedState.nodes || [];
+  const taskData = allNodes.find(n => n.id === taskId);
+  if (!taskData) return res.status(404).json({ error: 'Task not found' });
+
+  const persona = AGENT_PERSONAS[agentPersona] || AGENT_PERSONAS.gemini;
+
+  // Find recent job activity for this task to give agent memory
+  const recentJobs = agentQueue.getByTask(taskId).slice(-3);
+  const agentMemory = recentJobs.map(j =>
+    `[Previous run ${new Date(j.createdAt).toLocaleDateString()}]: ${j.summary || 'No summary'}`
+  ).join('\n');
+
+  const siblingContext = allNodes
+    .filter(n => n.parentId === taskData.parentId && n.id !== taskId)
+    .map(n => `• ${n.label} [${n.status}]`).join('\n');
+
+  const systemPrompt = `${persona.personality}
+
+You are the dedicated AI agent for this specific task. Answer questions, provide analysis, and help with anything related to this task.
+
+TASK: ${taskData.label}
+Status: ${taskData.status} | Priority: ${taskData.priority}
+Description: ${taskData.description || 'None'}
+Assignees: ${(taskData.assignees || []).join(', ') || 'Unassigned'}
+Due Date: ${taskData.dueDate || 'Not set'}
+Subtasks: ${(taskData.subtasks || []).map(s => (s.done ? '✓' : '○') + ' ' + s.text).join(', ') || 'None'}
+
+RELATED TASKS:
+${siblingContext || 'None'}
+
+${agentMemory ? 'YOUR PREVIOUS WORK:\n' + agentMemory : ''}
+
+Answer as the task expert. Be specific, concise, and helpful. Reference actual task data.`;
+
+  try {
+    const contents = (messages || []).map(m => ({
+      role:  m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }],
+    }));
+
+    if (!contents.length || contents[0].role !== 'user') {
+      contents.unshift({ role: 'user', parts: [{ text: '(start)' }] });
+    }
+
+    const gRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${key}`,
+      {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents,
+          generationConfig: { temperature: 0.6, maxOutputTokens: 4096 },
+        }),
+      }
+    );
+
+    const data = await gRes.json();
+    if (!gRes.ok) throw new Error(data?.error?.message || `HTTP ${gRes.status}`);
+
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) throw new Error('Empty response');
+
+    res.json({ text, taskId, agentPersona });
+  } catch (err) {
+    console.error('[AgentChat] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/supervisor/brief/:dept — Department supervisor briefing
+app.get('/api/supervisor/brief/:dept', async (req, res) => {
+  const { dept } = req.params;
+  const apiKey   = req.query.key || cachedGeminiKey;
+
+  if (!apiKey) return res.status(400).json({ error: 'No API key' });
+
+  const DEPT_PERSONA_MAP = {
+    marketing:    'aria',
+    finance:      'atlas',
+    curriculum:   'sage',
+    operations:   'max',
+    space_design: 'max',
+    equipment:    'max',
+    community:    'aria',
+    partnerships: 'aria',
+  };
+
+  const agentPersona = DEPT_PERSONA_MAP[dept] || 'gemini';
+  const allNodes     = sharedState.nodes || [];
+
+  try {
+    const supervisor = new SupervisorAgent({ department: dept, agentPersona, allNodes, apiKey, io });
+    const brief      = await supervisor.runBrief();
+    res.json(brief);
+  } catch (err) {
+    console.error('[Supervisor] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/supervisor/run-all — Run all agents for a department
+app.post('/api/supervisor/run-all', async (req, res) => {
+  const { department, agentPersona, apiKey } = req.body || {};
+  const key = apiKey || cachedGeminiKey;
+
+  if (!key || !department) return res.status(400).json({ error: 'department and apiKey required' });
+
+  const allNodes  = sharedState.nodes || [];
+  const deptTasks = allNodes.filter(n => n.department === department && n.id !== 'root');
+
+  const jobs = [];
+  for (const task of deptTasks) {
+    const job = agentQueue.create({ taskId: task.id, taskData: task, allNodes, agentPersona, apiKey: key, io });
+    job.run().catch(err => console.error('[Agent] Batch job error:', err));
+    jobs.push({ jobId: job.jobId, taskId: task.id, taskLabel: task.label });
+
+    // Small delay between agent starts to avoid rate limits
+    await new Promise(r => setTimeout(r, 1500));
+  }
+
+  res.json({ started: jobs.length, jobs });
 });
 
 // ── Active users ──────────────────────────────────────────────────────────────

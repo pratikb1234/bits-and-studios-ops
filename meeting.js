@@ -1,11 +1,11 @@
 // ─── Meeting Transcript Processor ────────────────────────────────────────────
-// Core agentic feature: paste/upload meeting notes → Claude extracts actions
+// Core agentic feature: paste/upload meeting notes → Gemini extracts actions
 // → preview changes → one-click apply to mind map
 
 class MeetingProcessor {
-  constructor(data, claudeApi) {
+  constructor(data, geminiApi) {
     this.data     = data;
-    this.api      = claudeApi;
+    this.api      = geminiApi;
     this.panel    = null;
     this.isOpen   = false;
     this.meetings = this._loadMeetings();
@@ -27,17 +27,18 @@ class MeetingProcessor {
 
   toggle() { this.isOpen ? this.close() : this.open(); }
 
-  // ── Process transcript with Claude ───────────────────────────────────────
+  // ── Process transcript with Gemini ────────────────────────────────────
   async processTranscript(transcript, meetingTitle) {
     if (!transcript.trim()) return;
 
     const settings = this.data.getSettings();
-    if (!settings.anthropicApiKey) {
-      this._showError('Please set your Claude API key in ⚙️ Settings first.');
+    const apiKey = settings.geminiApiKey || settings.anthropicApiKey || '';
+    if (!apiKey) {
+      this._showError('Please set your Gemini API key in ⚙️ Settings first.');
       return;
     }
 
-    this.api.setApiKey(settings.anthropicApiKey);
+    this.api.setApiKey(apiKey);
     this._setLoading(true);
 
     try {
@@ -54,7 +55,7 @@ class MeetingProcessor {
       this._showPreview(parsed, meetingTitle, transcript);
 
     } catch (e) {
-      this._showError('Claude error: ' + e.message);
+      this._showError('Gemini error: ' + e.message);
     } finally {
       this._setLoading(false);
     }
@@ -126,7 +127,7 @@ class MeetingProcessor {
     if (window.CollabSync) window.CollabSync.emitMeeting?.(meeting);
   }
 
-  // ── Build Claude system prompt for meeting processing ─────────────────────
+  // ── Build Gemini system prompt for meeting processing ─────────────────────
   _buildSystemPrompt() {
     const nodes = this.data.getAllNodes().map(n => ({
       id: n.id, label: n.label, department: n.department,
@@ -194,7 +195,7 @@ RULES:
 - If a due date is mentioned, format as YYYY-MM-DD`;
   }
 
-  // ── Parse Claude response ─────────────────────────────────────────────────
+  // ── Parse Gemini response ─────────────────────────────────────────────────
   _parseMeetingResponse(text) {
     // Extract summary section
     const summaryMatch = text.match(/SUMMARY:\s*([\s\S]*?)(?=ACTION ITEMS:|<map_actions>|$)/i);
@@ -214,7 +215,7 @@ RULES:
     return { summary, actionsText, actions: actions || [] };
   }
 
-  // ── UI: show preview of what Claude found ─────────────────────────────────
+  // ── UI: show preview of what Gemini found ─────────────────────────────────
   _showPreview(parsed, title, transcript) {
     const preview = document.getElementById('meeting-preview');
     const input   = document.getElementById('meeting-input-area');

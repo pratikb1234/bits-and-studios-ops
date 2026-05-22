@@ -13,13 +13,14 @@ class App {
     window.DB = this.data;
 
     // Init each module with individual fault isolation
-    this._initModule('mindMap', () => new MindMap('mindmap-container', this.data));
-    this._initModule('sidebar',  () => new Sidebar(this.data));
-    this._initModule('chat',     () => new ChatPanel(this.data));
-    this._initModule('meeting',  () => new MeetingProcessor(this.data, new GeminiAPI()));
-    this._initModule('history',  () => new HistoryLog(this.data));
-    this._initModule('docs',     () => new DocsPanel(this.data, new GeminiAPI()));
-    this._initModule('search',   () => new SearchOverlay(this.data, this.mindMap));
+    this._initModule('mindMap',    () => new MindMap('mindmap-container', this.data));
+    this._initModule('sidebar',    () => new Sidebar(this.data));
+    this._initModule('chat',       () => new ChatPanel(this.data));
+    this._initModule('meeting',    () => new MeetingProcessor(this.data, new GeminiAPI()));
+    this._initModule('history',    () => new HistoryLog(this.data));
+    this._initModule('docs',       () => new DocsPanel(this.data, new GeminiAPI()));
+    this._initModule('search',     () => new SearchOverlay(this.data, this.mindMap));
+    this._initModule('agentPanel', () => new AgentPanel(this.data));  // must be last
 
     if (this.history) this.history.hookDataLayer();
 
@@ -36,8 +37,8 @@ class App {
     this.bindEvents();
     this.updateStats();
 
-    console.log('[App] ✅ Initialized. Modules:', 
-      ['mindMap','sidebar','chat','meeting','history','docs','search']
+    console.log('[App] ✅ Initialized. Modules:',
+      ['mindMap','sidebar','chat','meeting','history','docs','search','agentPanel']
         .map(k => `${k}:${this[k] ? '✓' : '✗'}`).join(' '));
   }
 

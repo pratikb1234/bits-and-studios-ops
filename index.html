@@ -72,6 +72,12 @@
         <!-- Gemini AI Chat -->
         <button id="toggle-chat" class="toolbar-btn" title="Gemini AI Chat">✨ <span class="btn-label">Gemini AI</span></button>
 
+        <!-- Agent Control -->
+        <button id="toggle-agents" class="toolbar-btn agent-toolbar-btn" title="AI Agent Control Centre"
+                onclick="window.app?.agentPanel?.toggle()">
+          🤖 <span class="btn-label">Agents</span>
+        </button>
+
         <!-- History -->
         <button id="tb-history" class="toolbar-btn tb-icon-only" title="Version History">
           🕓 <span id="history-badge" class="history-badge" style="display:none">0</span>
@@ -176,10 +182,31 @@
               </button>
             </div>
           </div>
+          <!-- Agent Section -->
+          <div class="field-group sb-agent-wrapper">
+            <div class="sb-section-label">
+              <span>🤖 AI Agent</span>
+            </div>
+            <div id="agent-sidebar-section"></div>
+          </div>
         </div>
 
         <div class="sidebar-actions">
           <button id="sb-delete" class="btn danger">🗑️ Delete Task</button>
+        </div>
+      </aside>
+
+      <!-- Agent Control Panel (Right, like chat panel) -->
+      <aside id="agent-panel" class="panel hidden agent-panel">
+        <div class="agent-panel-header">
+          <div class="agent-panel-title">
+            <span class="agent-panel-icon">🤖</span>
+            <span>Agent Control</span>
+          </div>
+          <button id="agent-panel-close" class="sidebar-close">✕</button>
+        </div>
+        <div id="agent-panel-content" class="agent-panel-content">
+          <!-- Rendered by agent.js -->
         </div>
       </aside>
 
@@ -487,6 +514,7 @@ Decided: Launch event on June 1st confirmed."></textarea>
   <script src="history.js"></script>
   <script src="docs.js"></script>
   <script src="search.js"></script>
+  <script src="agent.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

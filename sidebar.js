@@ -105,6 +105,11 @@ class Sidebar {
     this.renderAssignees(node.assignees || []);
     this.renderFiles(node.files || []);
 
+    // Agent section
+    if (window.app?.agentPanel) {
+      window.app.agentPanel.renderSidebarSection(nodeId);
+    }
+
     if (node.department && window.DEPARTMENTS[node.department]) {
       this.el.style.borderTop = `3px solid ${window.DEPARTMENTS[node.department].color}`;
     } else {

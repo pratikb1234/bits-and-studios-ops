@@ -444,6 +444,57 @@ class MindMap {
   _hideTooltip() {
     this._tooltipEl.classed('hidden', true);
   }
+
+  // ── Agent badge on nodes ─────────────────────────────────────────────────
+  updateAgentBadge(nodeId, status) {
+    // status: 'idle' | 'running' | 'done' | 'error' | null (remove)
+    if (!nodeId) return;
+
+    const PERSONAS = { gemini: '✨', aria: '📣', atlas: '💰', sage: '🎓', max: '🏗️' };
+    const nodeGroup = this.nodeGroup.select(`#ui-${nodeId}`);
+    if (nodeGroup.empty()) return;
+
+    // Remove existing badge
+    nodeGroup.selectAll('.agent-badge-svg').remove();
+
+    if (!status || status === 'idle') {
+      // Show dim badge if agent is assigned
+      const node = this.data.getNode(nodeId);
+      if (!node?.agent?.persona) return;
+      nodeGroup.append('circle')
+        .attr('class', 'agent-badge-svg')
+        .attr('cx', 0).attr('cy', -22)
+        .attr('r', 6)
+        .attr('fill', '#4f46e5')
+        .attr('stroke', '#1e1e2e')
+        .attr('stroke-width', 1.5)
+        .attr('opacity', 0.6);
+      return;
+    }
+
+    const colors = { running: '#3b82f6', done: '#10b981', error: '#ef4444' };
+    const color  = colors[status] || '#4f46e5';
+
+    nodeGroup.append('circle')
+      .attr('class', 'agent-badge-svg')
+      .attr('cx', 0).attr('cy', -22)
+      .attr('r', 6)
+      .attr('fill', color)
+      .attr('stroke', '#1e1e2e')
+      .attr('stroke-width', 1.5);
+
+    if (status === 'running') {
+      nodeGroup.append('circle')
+        .attr('class', 'agent-badge-svg agent-badge-pulse')
+        .attr('cx', 0).attr('cy', -22)
+        .attr('r', 6)
+        .attr('fill', 'none')
+        .attr('stroke', color)
+        .attr('stroke-width', 1.5)
+        .style('animation', 'agent-ring 1.5s ease-out infinite');
+    }
+  }
 }
 
 window.MindMap = MindMap;
+
