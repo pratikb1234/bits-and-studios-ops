@@ -303,21 +303,15 @@ class MindMapData {
     localStorage.setItem(perUserKey(CHAT_STORAGE_KEY), JSON.stringify(messages));
   }
 
-  /* ── Settings (per user for API key etc, shared for theme) ── */
+  /* ── Settings — SHARED across all users (API key, theme, etc.) ── */
   getSettings() {
     try {
-      // Merge: user-specific settings override shared settings
-      const shared  = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-      const personal = JSON.parse(localStorage.getItem(perUserKey(SETTINGS_KEY)) || '{}');
-      return { ...shared, ...personal };
+      return JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
     } catch { return {}; }
   }
 
   saveSettings(settings) {
-    // Personal settings (API key, preferences) stored per-user
-    // Shared settings (theme colour, etc.) stored shared too
-    localStorage.setItem(perUserKey(SETTINGS_KEY), JSON.stringify(settings));
-    // Also write to shared so non-logged-in fallback works
+    // Stored in shared key — same Gemini API key for everyone
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }
 
