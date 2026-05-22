@@ -25,10 +25,16 @@ const PRIORITY_META = {
   critical: { label: 'Critical', color: '#ef4444' },
 };
 
-const STORAGE_KEY = 'bits_studios_mindmap';
-const TEAM_STORAGE_KEY = 'bits_studios_team';
-const CHAT_STORAGE_KEY = 'bits_studios_chat';
-const SETTINGS_KEY = 'bits_studios_settings';
+const STORAGE_KEY      = 'bits_studios_mindmap';   // SHARED — same for all users
+const TEAM_STORAGE_KEY = 'bits_studios_team';       // SHARED
+const CHAT_STORAGE_KEY = 'bits_studios_chat';       // PER USER — namespaced below
+const SETTINGS_KEY     = 'bits_studios_settings';   // PER USER — namespaced below
+
+// Per-user key — always call this to get the namespaced key
+function perUserKey(base) {
+  const uid = window.Auth?.userId;
+  return uid ? `${base}_${uid}` : base;
+}
 
 /* ── helpers ── */
 let _idCounter = 0;
@@ -286,25 +292,32 @@ class MindMapData {
     return team;
   }
 
-  /* ── Chat History ── */
+  /* ── Chat History (per user) ── */
   getChatHistory() {
     try {
-      return JSON.parse(localStorage.getItem(CHAT_STORAGE_KEY) || '[]');
+      return JSON.parse(localStorage.getItem(perUserKey(CHAT_STORAGE_KEY)) || '[]');
     } catch { return []; }
   }
 
   saveChatHistory(messages) {
-    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(messages));
+    localStorage.setItem(perUserKey(CHAT_STORAGE_KEY), JSON.stringify(messages));
   }
 
-  /* ── Settings ── */
+  /* ── Settings (per user for API key etc, shared for theme) ── */
   getSettings() {
     try {
-      return JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+      // Merge: user-specific settings override shared settings
+      const shared  = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+      const personal = JSON.parse(localStorage.getItem(perUserKey(SETTINGS_KEY)) || '{}');
+      return { ...shared, ...personal };
     } catch { return {}; }
   }
 
   saveSettings(settings) {
+    // Personal settings (API key, preferences) stored per-user
+    // Shared settings (theme colour, etc.) stored shared too
+    localStorage.setItem(perUserKey(SETTINGS_KEY), JSON.stringify(settings));
+    // Also write to shared so non-logged-in fallback works
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }
 

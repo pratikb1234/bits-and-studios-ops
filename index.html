@@ -83,10 +83,15 @@
           🕓 <span id="history-badge" class="history-badge" style="display:none">0</span>
         </button>
 
-        <button id="tb-export" class="toolbar-btn tb-icon-only" title="Export JSON">📥</button>
-        <button id="tb-import" class="toolbar-btn tb-icon-only" title="Import JSON">📤</button>
+        <button id="tb-export" class="toolbar-btn tb-icon-only" data-admin-only title="Export JSON">📥</button>
+        <button id="tb-import" class="toolbar-btn tb-icon-only" data-admin-only title="Import JSON">📤</button>
         <input type="file" id="import-file-input" class="hidden" accept=".json">
-        <button id="tb-settings" class="toolbar-btn tb-icon-only" title="Settings">⚙️</button>
+        <button id="tb-settings" class="toolbar-btn tb-icon-only" data-admin-only title="Settings">⚙️</button>
+      </div>
+
+      <!-- Current User Badge -->
+      <div id="current-user-badge" class="current-user-badge" title="Switch user / menu">
+        <!-- Populated by auth.js -->
       </div>
 
       <!-- Live Presence Bar -->
@@ -503,7 +508,15 @@ Decided: Launch event on June 1st confirmed."></textarea>
   <!-- Mobile nav overlay -->
   <div id="mobile-overlay" class="mobile-overlay hidden"></div>
 
+  <!-- Login Overlay (shown before app loads) -->
+  <div id="login-overlay" class="login-overlay">
+    <div id="login-body" class="login-body">
+      <!-- populated by auth.js -->
+    </div>
+  </div>
+
   <!-- Application Scripts -->
+  <script src="auth.js"></script>
   <script src="data.js"></script>
   <script src="collab-sync.js"></script>
   <script src="mindmap.js"></script>

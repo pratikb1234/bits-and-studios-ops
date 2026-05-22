@@ -24,9 +24,12 @@ class App {
 
     if (this.history) this.history.hookDataLayer();
 
-    // Sync saved API key to all modules
+    // Sync API key: prefer server-cached key (set by admin), fallback to user's own
     try {
-      const savedKey = this.data.getSettings().geminiApiKey || this.data.getSettings().anthropicApiKey || '';
+      const settings = this.data.getSettings();
+      // Try to get per-user API key first, then fall back to shared settings
+      const userApiKey = window.Auth?.getItem('bits_gemini_key') || '';
+      const savedKey   = userApiKey || settings.geminiApiKey || settings.anthropicApiKey || '';
       if (savedKey) {
         if (this.docs)    this.docs.gemini.setApiKey(savedKey);
         if (this.meeting) this.meeting.api.setApiKey(savedKey);
@@ -338,11 +341,35 @@ class App {
   }
 }
 
-// Bootstrap
-document.addEventListener('DOMContentLoaded', () => {
+// Bootstrap — auth first, then app
+document.addEventListener('DOMContentLoaded', async () => {
+  // 1. Boot auth (restore or show login)
+  let loggedIn = false;
+  try {
+    loggedIn = await window.Auth.boot();
+  } catch (e) {
+    console.warn('[Auth] Boot failed, continuing without auth:', e.message);
+    loggedIn = true; // allow app to load even if auth server is down
+  }
+
+  if (!loggedIn) {
+    // Show login screen — app will init after login via auth:login event
+    window.Auth.showLoginScreen();
+
+    window.addEventListener('auth:login', () => {
+      window.Auth.hideLoginScreen();
+      window.app = new App();
+      _bindGlobalShortcuts();
+    }, { once: true });
+    return;
+  }
+
+  // Already logged in — go straight to app
   window.app = new App();
-  
-  // Undo/Redo shortcuts
+  _bindGlobalShortcuts();
+});
+
+function _bindGlobalShortcuts() {
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
       if (e.shiftKey) {
@@ -352,4 +379,4 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
   });
-});
+}

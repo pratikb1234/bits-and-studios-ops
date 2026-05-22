@@ -16,7 +16,10 @@ class HistoryLog {
 
   // ── Record a change ───────────────────────────────────────────────────────
   record(type, node, userName) {
-    const name  = userName || localStorage.getItem('bits_collab_name') || 'Someone';
+    const name  = userName
+      || window.Auth?.currentUser?.name
+      || localStorage.getItem('bits_collab_name')
+      || 'Someone';
     const color = this._colorFor(name);
 
     let description = '';
@@ -129,12 +132,16 @@ class HistoryLog {
     badge.style.display = recent > 0 ? 'flex' : 'none';
   }
 
-  // ── Persistence ───────────────────────────────────────────────────────────
+  // ── Persistence (per user) ────────────────────────────────────────────────────
+  _histKey() {
+    const uid = window.Auth?.userId;
+    return uid ? `bits_history_${uid}` : 'bits_history';
+  }
   _load() {
-    try { return JSON.parse(localStorage.getItem('bits_history') || '[]'); } catch { return []; }
+    try { return JSON.parse(localStorage.getItem(this._histKey()) || '[]'); } catch { return []; }
   }
   _save() {
-    localStorage.setItem('bits_history', JSON.stringify(this._log));
+    localStorage.setItem(this._histKey(), JSON.stringify(this._log));
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────

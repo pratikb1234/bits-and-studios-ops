@@ -8,6 +8,7 @@ const path     = require('path');
 const fs       = require('fs');
 const crypto   = require('crypto');
 const { AgentJobQueue, SupervisorAgent, AGENT_PERSONAS } = require('./agent-runtime');
+const { UserStore } = require('./users');
 
 const app    = express();
 const server = http.createServer(app);
@@ -58,6 +59,25 @@ function saveToDisk() {
 
 loadFromDisk();
 
+// ── User store (init after disk load so users are in sharedState) ───────────────
+const userStore = new UserStore(sharedState, saveToDisk);
+
+// ── Auth middleware ─────────────────────────────────────────────────────
+function requireAdmin(req, res, next) {
+  const token = req.headers['x-session-token'] || req.query._token;
+  const session = userStore.verifyToken(token);
+  if (!session || session.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  req.session = session;
+  next();
+}
+
+function getSession(req) {
+  const token = req.headers['x-session-token'] || req.query._token || '';
+  return userStore.verifyToken(token);
+}
+
 // ── Approval tokens store ────────────────────────────────────────────────────
 // { token → { tasks, meetingTitle, assignee, status, createdAt } }
 const pendingApprovals = new Map();
@@ -67,6 +87,67 @@ let cachedGeminiKey = process.env.GEMINI_API_KEY || '';
 
 // ── Agent Job Queue (singleton) ──────────────────────────────────────────────
 const agentQueue = new AgentJobQueue();
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AUTH ENDPOINTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// GET /api/users — list all users (public, no auth needed — names/avatars only)
+app.get('/api/users', (req, res) => {
+  res.json({ users: userStore.getUsers() });
+});
+
+// POST /api/auth/login — select a user profile, get token
+app.post('/api/auth/login', (req, res) => {
+  const { userId } = req.body || {};
+  if (!userId) return res.status(400).json({ error: 'userId required' });
+  const result = userStore.login(userId);
+  if (!result) return res.status(404).json({ error: 'User not found' });
+  res.json(result);
+});
+
+// POST /api/auth/verify-pin — verify admin PIN for sensitive actions
+app.post('/api/auth/verify-pin', (req, res) => {
+  const { userId, pin } = req.body || {};
+  if (!userId || !pin) return res.status(400).json({ error: 'userId and pin required' });
+  const ok = userStore.verifyPin(userId, pin);
+  if (!ok) return res.status(401).json({ error: 'Incorrect PIN' });
+  res.json({ ok: true });
+});
+
+// POST /api/users — create user (employee: open, admin: requires token)
+app.post('/api/users', (req, res) => {
+  const { name, role, pin, color, department } = req.body || {};
+  if (!name) return res.status(400).json({ error: 'name required' });
+
+  // Creating an admin user requires admin token
+  if (role === 'admin') {
+    const token   = req.headers['x-session-token'] || req.query._token;
+    const session = userStore.verifyToken(token);
+    if (!session || session.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin token required to create admin users' });
+    }
+  }
+
+  const user = userStore.addUser({ name, role: role || 'employee', pin, color, department });
+  io.emit('users_updated', { users: userStore.getUsers() });
+  res.json({ ok: true, user });
+});
+
+// PUT /api/users/:id/pin — change PIN (admin only)
+app.put('/api/users/:id/pin', requireAdmin, (req, res) => {
+  const { pin } = req.body || {};
+  if (!pin) return res.status(400).json({ error: 'pin required' });
+  const ok = userStore.updatePin(req.params.id, pin);
+  res.json({ ok });
+});
+
+// DELETE /api/users/:id — delete user (admin only)
+app.delete('/api/users/:id', requireAdmin, (req, res) => {
+  const ok = userStore.deleteUser(req.params.id);
+  io.emit('users_updated', { users: userStore.getUsers() });
+  res.json({ ok });
+});
 
 // ── /api/save-key — store Gemini key server-side ─────────────────────────────
 app.post('/api/save-key', (req, res) => {
