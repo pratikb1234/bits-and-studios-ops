@@ -205,13 +205,69 @@ class DocsPanel {
       linkedNodes:  [],
       driveLink:    null,
       wordCount:    0,
-      status:       'draft',   // draft | reading | discussion | final
+      status:       'draft',
     };
 
     this.docs.unshift(doc);
     this._saveDocs();
     this._openEditor(doc);
   }
+
+  // Called from sidebar "✨ AI Doc" button — creates a doc pre-filled from a task node
+  newDocForTask(node) {
+    if (!node) throw new Error('No task node provided');
+
+    // Pick best template based on area
+    const areaTemplateMap = {
+      'brand':      'brand',
+      'Brand':      'brand',
+      'marketing':  'marketing',
+      'Marketing':  'marketing',
+      'operations': 'operations',
+      'Operations': 'operations',
+      'curriculum': 'product',
+      'Product':    'product',
+    };
+    const templateKey = areaTemplateMap[node.area || node.department] || 'strategy';
+    const template    = MEMO_TEMPLATES[templateKey] || MEMO_TEMPLATES[Object.keys(MEMO_TEMPLATES)[0]];
+
+    const userName = window.Auth?.currentUser?.name || localStorage.getItem('bits_collab_name') || 'Unknown';
+
+    const doc = {
+      id:          'doc_' + Date.now(),
+      title:       node.label || 'Untitled Document',
+      template:    templateKey,
+      author:      node.ownerName || userName,
+      createdAt:   new Date().toISOString(),
+      updatedAt:   new Date().toISOString(),
+      sections:    template
+        ? template.sections.map(s => ({
+            ...s,
+            // Pre-fill the first section with node summary if available
+            content: s === template.sections[0] && node.description
+              ? node.description
+              : '',
+          }))
+        : [{ heading: 'Overview', content: node.description || '' }],
+      comments:    [],
+      linkedNodes: [node.id],
+      driveLink:   node.documentLink || null,
+      wordCount:   0,
+      status:      'draft',
+      // Carry over task metadata
+      taskRef:     { id: node.id, label: node.label, owner: node.ownerName, area: node.area, dueDate: node.dueDate },
+    };
+
+    this.docs.unshift(doc);
+    this._saveDocs();
+
+    // Open the docs panel and editor
+    if (!this._isOpen) this.open();
+    this._openEditor(doc);
+
+    return doc;
+  }
+
 
   _openEditor(doc) {
     this.currentDoc = doc;
