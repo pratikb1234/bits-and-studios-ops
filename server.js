@@ -238,10 +238,27 @@ const pendingApprovals = new Map();
 // AUTH ENDPOINTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// GET /api/state — direct REST fetch for all nodes (called on login, bypasses socket)
+app.get('/api/state', (req, res) => {
+  const nodes = sharedState.nodes || [];
+  // If empty, try to build defaults right now
+  if (!nodes.length) {
+    try {
+      sharedState = buildDefaultState();
+      saveToDisk();
+      console.log('[API] /api/state triggered buildDefaultState, nodes:', sharedState.nodes?.length);
+    } catch(e) {
+      console.error('[API] buildDefaultState failed:', e.message);
+    }
+  }
+  res.json({ nodes: sharedState.nodes || [], users: sharedState.users || [] });
+});
+
 // GET /api/users — list all users (public, no auth needed — names/avatars only)
 app.get('/api/users', (req, res) => {
   res.json({ users: userStore.getUsers() });
 });
+
 
 // POST /api/auth/login — select a user profile, get session token
 app.post('/api/auth/login', (req, res) => {

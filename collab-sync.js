@@ -258,12 +258,40 @@
     $presenceAvatars = document.getElementById('presence-avatars');
     $peerCursors     = document.getElementById('peer-cursors');
 
-    // Hide the old join modal permanently (kept in HTML for safety)
+    // Hide the old join modal permanently
     const joinModal = document.getElementById('join-modal');
     if (joinModal) joinModal.remove();
 
-    // Start collab once user is authenticated
+    // ── Load nodes via REST (fast, reliable, no socket dependency) ────────────
+    async function loadNodesFromREST() {
+      try {
+        const r = await fetch('/api/state');
+        if (!r.ok) return;
+        const { nodes, users } = await r.json();
+        if (!nodes || !nodes.length || !window.DB) return;
+
+        _suppressRemoteEvents = true;
+        window.DB._nodes.clear();
+        for (const n of nodes) window.DB._nodes.set(n.id, n);
+        window.DB.save();
+        window.DB._emit('load');
+        _suppressRemoteEvents = false;
+        console.log('[Collab] REST load: loaded', nodes.length, 'nodes');
+
+        // If still empty after REST load, and admin → seed sprint
+        if (!nodes.length && window.Auth?.isAdmin) {
+          await _autoSeedSprint();
+        }
+      } catch(e) {
+        console.warn('[Collab] REST load failed:', e.message);
+      }
+    }
+
     function startCollab() {
+      // 1. Load nodes via REST immediately (no socket wait)
+      setTimeout(loadNodesFromREST, 100);
+
+      // 2. Then start socket for real-time collaboration
       setTimeout(() => {
         hookDataLayer();
         hookCursorBroadcast();
@@ -275,14 +303,11 @@
       }, 300);
     }
 
-    // If already logged in (page refresh with session)
     if (window.Auth?.currentUser) {
       startCollab();
     } else {
-      // Wait for login to complete
       window.addEventListener('auth:login', startCollab, { once: true });
       window.addEventListener('admin:pin:ok', () => {
-        // Re-identify after admin PIN confirmed
         setTimeout(() => window.CollabSync.reidentify(), 500);
       });
     }
