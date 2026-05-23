@@ -78,7 +78,10 @@ class AuthManager {
       }
     }
 
-    // Show login screen
+    // Always show login screen — no silent session restore.
+    // Employees: click card → in. Admins: click card → password → in.
+    // This is intentional: predictable, secure, no surprise auto-logins.
+    clearSession(); // wipe any stale session so nothing auto-fires
     return false;
   }
 
