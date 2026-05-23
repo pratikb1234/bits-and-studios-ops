@@ -5165,3 +5165,15 @@ body::before {
   text-align: center;
   line-height: 1.6;
 }
+
+/* Meetings panel header buttons row */
+.map-header-btns {
+  position: absolute; top: 12px; right: 12px;
+  display: flex; gap: 6px;
+}
+.map-refresh-btn {
+  background: rgba(255,255,255,0.06); border: none; color: #64748b;
+  width: 28px; height: 28px; border-radius: 7px; cursor: pointer; font-size: 15px;
+  transition: all .15s; display: flex; align-items: center; justify-content: center;
+}
+.map-refresh-btn:hover { background: rgba(99,102,241,.15); color: #818cf8; transform: rotate(90deg); }

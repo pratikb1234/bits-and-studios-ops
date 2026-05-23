@@ -45,11 +45,20 @@ app.use(express.static(__dirname));
 let sharedState = { nodes: null, team: [], meetings: [] };
 let activeSession = null; // { meetingId, roomId, hostName, title, startedAt }
 
+// Always ensure required fields exist (safe after any load from disk/MongoDB)
+function sanitiseState(s) {
+  if (!s.meetings)  s.meetings  = [];
+  if (!s.team)      s.team      = [];
+  if (!s.users)     s.users     = s.users || [];
+  if (!s.settings)  s.settings  = {};
+  return s;
+}
+
 function loadFromDisk() {
   try {
     if (fs.existsSync(DATA_FILE)) {
-      sharedState = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-      console.log(`[Server] Loaded ${sharedState.nodes?.length ?? 0} nodes from disk.`);
+      sharedState = sanitiseState(JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
+      console.log(`[Server] Loaded ${sharedState.nodes?.length ?? 0} nodes, ${sharedState.meetings.length} meetings from disk.`);
     }
   } catch (e) { console.error('[Server] Failed to load data file:', e.message); }
 }
@@ -160,7 +169,7 @@ function buildDefaultState() {
   }));
 
   console.log(`[Server] 🌱 Built default sprint state: ${nodes.length} nodes, ${users.length} users`);
-  return { nodes, users, settings: {}, version: 1 };
+  return sanitiseState({ nodes, users, settings: {}, version: 1 });
 }
 
 // ── Boot: try MongoDB first, fall back to file, fall back to defaults ─────────
@@ -170,8 +179,8 @@ async function boot() {
   if (mongoOk) {
     const mongoData = await loadFromMongo();
     if (mongoData && mongoData.nodes?.length) {
-      sharedState = mongoData;
-      console.log(`[Server] ✅ Loaded ${sharedState.nodes.length} nodes from MongoDB Atlas`);
+      sharedState = sanitiseState(mongoData);
+      console.log(`[Server] ✅ Loaded ${sharedState.nodes.length} nodes, ${sharedState.meetings.length} meetings from MongoDB`);
       saveToDisk();
     } else {
       // MongoDB empty — try local file first

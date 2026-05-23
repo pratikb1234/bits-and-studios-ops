@@ -36,7 +36,7 @@ class MeetingsPanel {
   open() {
     this.isOpen = true;
     this._el.panel?.classList.remove('hidden');
-    this._loadMeetings();
+    this._loadMeetings(); // always fresh load from server
   }
 
   close() {
@@ -48,14 +48,18 @@ class MeetingsPanel {
 
   /* ── Load meetings from server ───────────────────────────────────────── */
   async _loadMeetings() {
-    if (this._el.body) this._el.body.innerHTML = '<div class="map-loading">⟳ Loading…</div>';
+    if (this._el.body) this._el.body.innerHTML = '<div class="map-loading">⟳ Loading meetings…</div>';
     try {
       const res  = await fetch('/api/meetings');
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
       const data = await res.json();
-      this.meetings = data.meetings || [];
+      this.meetings = Array.isArray(data.meetings) ? data.meetings : [];
+      console.log('[MeetingsPanel] Loaded', this.meetings.length, 'meetings');
       this._render();
     } catch (err) {
-      if (this._el.body) this._el.body.innerHTML = `<div class="map-empty">Could not load meetings: ${err.message}</div>`;
+      console.error('[MeetingsPanel] Load error:', err);
+      if (this._el.body) this._el.body.innerHTML =
+        `<div class="map-empty">Could not load meetings<br><small style="color:#475569">${err.message}</small><br><button onclick="window.app?.meetingsPanel?._loadMeetings()" style="margin-top:12px;padding:6px 14px;background:#4f46e5;border:none;color:white;border-radius:8px;cursor:pointer;font-family:inherit">Retry</button></div>`;
     }
   }
 
@@ -78,7 +82,7 @@ class MeetingsPanel {
     if (!list.length) {
       this._el.body.innerHTML = q
         ? `<div class="map-empty">No meetings match "<em>${q}</em>"</div>`
-        : `<div class="map-empty">No meetings yet.<br><span style="color:#475569">Start a meeting with 📹 Live Meet.</span></div>`;
+        : `<div class="map-empty">No meetings recorded yet.<br><span style="color:#475569;font-size:11px">Click 📹 Live Meet to start one.<br>Meetings appear here after they end.</span></div>`;
       return;
     }
 
@@ -250,6 +254,9 @@ class MeetingsPanel {
       const s = window._socket || window._agentSocket;
       if (!s) { setTimeout(tryBind, 1200); return; }
 
+      // Reload archive when socket connects (picks up any saved meetings)
+      if (this.isOpen) this._loadMeetings();
+
       s.on('meet:session_broadcast', (session) => {
         this._showBanner(session);
         window.app?.showToast(`📹 ${session.hostName} started "${session.title}" — Join Now`, 'info');
@@ -267,6 +274,9 @@ class MeetingsPanel {
   /* ── Bindings ─────────────────────────────────────────────────────────── */
   _bindEvents() {
     this._el.closeBtn?.addEventListener('click', () => this.close());
+
+    // Refresh button (re-fetch from server)
+    document.getElementById('map-refresh-btn')?.addEventListener('click', () => this._loadMeetings());
 
     this._el.asbJoin?.addEventListener('click', () => {
       if (this.activeSession) {
