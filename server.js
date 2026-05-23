@@ -243,28 +243,32 @@ app.get('/api/users', (req, res) => {
   res.json({ users: userStore.getUsers() });
 });
 
-// POST /api/auth/login — select a user profile, get token
+// POST /api/auth/login — select a user profile, get session token
+app.post('/api/auth/login', (req, res) => {
+  const { userId } = req.body || {};
+  if (!userId) return res.status(400).json({ error: 'userId required' });
+  const result = userStore.login(userId);
+  if (!result) return res.status(404).json({ error: 'User not found' });
+  res.json(result);
+});
+
+// POST /api/save-key — store org Gemini key server-side
 app.post('/api/save-key', (req, res) => {
-  const { key } = req.body;
+  const key = req.body?.key || req.body?.geminiApiKey;
   if (!key) return res.status(400).json({ error: 'Key required' });
   cachedGeminiKey = key;
   if (!sharedState.settings) sharedState.settings = {};
   sharedState.settings.geminiApiKey = key;
   saveToDiskDebounced();
   saveData().catch(() => {});
+  console.log('[Server] Gemini API key saved (length:', key.length, ')');
   res.json({ ok: true });
 });
 
-// GET /api/check-key — returns key status + key for authenticated sessions
-// The key is org-wide: admin sets it once, all users use it
+// GET /api/check-key — org-wide key status (used by all clients)
 app.get('/api/check-key', (req, res) => {
-  const key = cachedGeminiKey ||
-              process.env.GEMINI_API_KEY ||
-              sharedState.settings?.geminiApiKey || '';
-  res.json({
-    hasKey: !!key,
-    key:    key,   // All authenticated users get the key — it's org-level
-  });
+  const key = cachedGeminiKey || process.env.GEMINI_API_KEY || sharedState.settings?.geminiApiKey || '';
+  res.json({ hasKey: !!key, key });
 });
 
 // POST /api/auth/verify-pin — verify admin PIN for sensitive actions
@@ -310,21 +314,7 @@ app.delete('/api/users/:id', requireAdmin, (req, res) => {
   res.json({ ok });
 });
 
-// ── /api/save-key — store Gemini key server-side (persisted to disk) ──────────
-app.post('/api/save-key', (req, res) => {
-  const { geminiApiKey } = req.body || {};
-  if (!geminiApiKey) return res.status(400).json({ error: 'No key provided' });
-
-  cachedGeminiKey = geminiApiKey;
-
-  // Persist to collab-data.json so key survives server restarts/redeploys
-  if (!sharedState.settings) sharedState.settings = {};
-  sharedState.settings.geminiApiKey = geminiApiKey;
-  saveToDisk();
-
-  console.log('[Server] Gemini API key saved to disk (length:', geminiApiKey.length, ')');
-  res.json({ ok: true });
-});
+// (duplicate save-key removed — consolidated above)
 
 // ── Load API key from disk on startup ─────────────────────────────────────────
 // (runs after loadFromDisk + UserStore init)
