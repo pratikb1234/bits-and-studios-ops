@@ -69,8 +69,8 @@
 
         <div class="toolbar-divider" style="margin: 0 8px;"></div>
 
-        <!-- Gemini AI Chat -->
-        <button id="toggle-chat" class="toolbar-btn" title="Gemini AI Chat">✨ <span class="btn-label">Gemini AI</span></button>
+        <!-- Jarvis AI Chat -->
+        <button id="toggle-chat" class="toolbar-btn jarvis-btn" title="Co-Jarvis — AI Advisor powered by Gemini">✨ <span class="btn-label">Jarvis</span></button>
 
         <!-- Agent Control -->
         <button id="toggle-agents" class="toolbar-btn agent-toolbar-btn" title="AI Agent Control Centre"
@@ -78,8 +78,8 @@
           🤖 <span class="btn-label">Agents</span>
         </button>
 
-        <!-- History -->
-        <button id="tb-history" class="toolbar-btn tb-icon-only" title="Version History">
+        <!-- History (admin only) -->
+        <button id="tb-history" class="toolbar-btn tb-icon-only" data-admin-only title="Version History">
           🕓 <span id="history-badge" class="history-badge" style="display:none">0</span>
         </button>
 
@@ -100,6 +100,38 @@
         <div id="collab-status" class="collab-status connecting">Connecting…</div>
       </div>
     </header>
+
+    <!-- View Mode Bar -->
+    <div id="view-mode-bar" class="view-mode-bar">
+      <div class="vmb-label">View:</div>
+      <div class="vmb-modes">
+        <button class="vmb-btn active" data-view="all" onclick="window.ViewMode?.set('all', this)" title="See all tasks across all departments">
+          🌐 All Tasks
+        </button>
+        <button class="vmb-btn" data-view="mine" onclick="window.ViewMode?.set('mine', this)" title="Only tasks you own or are assigned to">
+          👤 My Tasks
+        </button>
+        <button class="vmb-btn" data-view="focus" onclick="window.ViewMode?.set('focus', this)" title="Tasks due in the next 7 days">
+          ⏰ Focus
+        </button>
+        <div class="vmb-divider"></div>
+        <select id="vmb-dept-select" class="vmb-dept-select" onchange="window.ViewMode?.setDept(this.value)" title="Filter by department">
+          <option value="">All Depts</option>
+          <option value="marketing">📣 Marketing</option>
+          <option value="operations">⚙️ Operations</option>
+          <option value="finance">💰 Finance</option>
+          <option value="curriculum">🎓 Curriculum</option>
+          <option value="technology">💻 Technology</option>
+          <option value="community">🤝 Community</option>
+        </select>
+      </div>
+      <div class="vmb-right">
+        <span id="vmb-count" class="vmb-count"></span>
+        <button class="vmb-toggle-done" onclick="window.ViewMode?.toggleDone()" title="Show / hide completed tasks">
+          <span id="vmb-done-label">👁️ Hide Done</span>
+        </button>
+      </div>
+    </div>
 
     <!-- Main Workspace -->
     <main id="main-content">
@@ -130,9 +162,13 @@
           <div class="field-group">
             <label class="field-label">Status</label>
             <div class="status-pills">
-              <button class="status-pill active" data-status="not_started">Not Started</button>
-              <button class="status-pill" data-status="in_progress">In Progress</button>
-              <button class="status-pill" data-status="done">Done</button>
+              <button class="status-pill active" data-status="not_started">🔵 Not Started</button>
+              <button class="status-pill" data-status="in_progress">🔄 In Progress</button>
+              <button class="status-pill" data-status="in_review">👀 In Review</button>
+              <button class="status-pill" data-status="need_support">🆘 Need Support</button>
+              <button class="status-pill" data-status="blocked">🚫 Blocked</button>
+              <button class="status-pill" data-status="done">✅ Done</button>
+              <button class="status-pill" data-status="cancelled">❌ Cancelled</button>
             </div>
           </div>
           
@@ -148,15 +184,33 @@
           
           <div class="field-group">
             <label class="field-label">Due Date</label>
-            <input type="date" id="sb-due" class="field-input">
+            <div class="sb-due-row">
+              <input type="date" id="sb-due" class="field-input">
+              <button id="sb-suggest-deadline" class="sb-suggest-btn" title="Suggest deadline based on priority">✨ Suggest</button>
+            </div>
           </div>
-          
+
           <div class="field-group">
             <label class="field-label">Assignees</label>
             <div id="sb-assignees" class="assignee-list"></div>
             <select id="sb-new-assignee" class="field-select" style="padding: 4px 8px; width: 120px; font-size: 11px;">
               <option value="">+ Assign to...</option>
             </select>
+          </div>
+
+          <!-- Collaborators (can edit this task) -->
+          <div class="field-group">
+            <label class="field-label">Collaborators <span class="sb-field-hint">can edit this task</span></label>
+            <div id="sb-collabs" class="assignee-list"></div>
+            <select id="sb-add-collab" class="field-select" style="padding:4px 8px;width:140px;font-size:11px;display:none">
+              <option value="">+ Add collaborator...</option>
+            </select>
+          </div>
+
+          <!-- Owner badge -->
+          <div class="field-group">
+            <label class="field-label">Owner</label>
+            <div id="sb-owner-display" class="sb-owner-chip"></div>
           </div>
           
           <div class="field-group">
@@ -265,7 +319,7 @@ Decided: Launch event on June 1st confirmed."></textarea>
               <div class="mtg-spinner-dot"></div>
               <div class="mtg-spinner-dot"></div>
               <div class="mtg-spinner-dot"></div>
-              <span>Claude is reading your meeting…</span>
+              <span>Jarvis is reading your meeting…</span>
             </div>
           </div>
 
@@ -516,6 +570,7 @@ Decided: Launch event on June 1st confirmed."></textarea>
   </div>
 
   <!-- Application Scripts -->
+  <script src="permissions.js"></script>
   <script src="auth.js"></script>
   <script src="data.js"></script>
   <script src="collab-sync.js"></script>
@@ -528,6 +583,7 @@ Decided: Launch event on June 1st confirmed."></textarea>
   <script src="docs.js"></script>
   <script src="search.js"></script>
   <script src="agent.js"></script>
+  <script src="view-mode.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

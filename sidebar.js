@@ -6,15 +6,18 @@ class Sidebar {
     this.el = document.getElementById('sidebar');
     this.currentNodeId = null;
 
-    this.titleInput       = document.getElementById('sb-title');
-    this.descInput        = document.getElementById('sb-desc');
-    this.deptSelect       = document.getElementById('sb-dept');
-    this.dueDateInput     = document.getElementById('sb-due');
-    this.subtaskList      = document.getElementById('sb-subtasks');
-    this.newSubtaskInput  = document.getElementById('sb-new-subtask');
-    this.addSubtaskBtn    = document.getElementById('sb-add-subtask');
-    this.assigneeList     = document.getElementById('sb-assignees');
+    this.titleInput        = document.getElementById('sb-title');
+    this.descInput         = document.getElementById('sb-desc');
+    this.deptSelect        = document.getElementById('sb-dept');
+    this.dueDateInput      = document.getElementById('sb-due');
+    this.subtaskList       = document.getElementById('sb-subtasks');
+    this.newSubtaskInput   = document.getElementById('sb-new-subtask');
+    this.addSubtaskBtn     = document.getElementById('sb-add-subtask');
+    this.assigneeList      = document.getElementById('sb-assignees');
     this.newAssigneeSelect = document.getElementById('sb-new-assignee');
+    this.collabList        = document.getElementById('sb-collabs');
+    this.addCollabSelect   = document.getElementById('sb-add-collab');
+    this.ownerDisplay      = document.getElementById('sb-owner-display');
 
     this.bindEvents();
     this.populateSelects();
@@ -54,13 +57,29 @@ class Sidebar {
     });
 
     this.newAssigneeSelect.addEventListener('change', () => {
+      if (!window.RBAC?.check('assign_any', this.currentNodeId) &&
+          !window.Auth?.isAdmin) {
+        this.newAssigneeSelect.value = '';
+        return;
+      }
       if (this.newAssigneeSelect.value) {
         this.addAssignee(this.newAssigneeSelect.value);
         this.newAssigneeSelect.value = '';
       }
     });
 
+    // Collaborator select
+    if (this.addCollabSelect) {
+      this.addCollabSelect.addEventListener('change', () => {
+        if (this.addCollabSelect.value) {
+          this.addCollaborator(this.addCollabSelect.value);
+          this.addCollabSelect.value = '';
+        }
+      });
+    }
+
     document.getElementById('sb-delete').addEventListener('click', () => {
+      if (!window.RBAC?.check('delete_task')) return;
       if (!this.currentNodeId) return;
       if (this.currentNodeId === 'root') { alert('Cannot delete root node.'); return; }
       if (confirm('Delete this task and all sub-tasks?')) {
@@ -69,6 +88,12 @@ class Sidebar {
         if (window.app) window.app.mindMap.selectNode(null);
       }
     });
+
+    // Smart deadline suggest
+    const suggestBtn = document.getElementById('sb-suggest-deadline');
+    if (suggestBtn) {
+      suggestBtn.addEventListener('click', () => this._suggestDeadline());
+    }
   }
 
   populateSelects() {
@@ -92,6 +117,7 @@ class Sidebar {
 
     this.currentNodeId = nodeId;
     this.refreshTeamList();
+    this._refreshUserList();
 
     this.titleInput.value   = node.label       || '';
     this.descInput.value    = node.description || '';
@@ -103,7 +129,12 @@ class Sidebar {
 
     this.renderSubtasks(node.subtasks || []);
     this.renderAssignees(node.assignees || []);
+    this.renderCollaborators(node.collaborators || [], node);
+    this.renderOwner(node);
     this.renderFiles(node.files || []);
+
+    // Apply RBAC locking
+    if (window.RBAC) window.RBAC.applySidebarLock(nodeId);
 
     // Agent section
     if (window.app?.agentPanel) {
@@ -116,7 +147,7 @@ class Sidebar {
       this.el.style.borderTop = 'none';
     }
 
-    document.getElementById('sb-delete').style.display = node.id === 'root' ? 'none' : 'block';
+    document.getElementById('sb-delete').style.display = node.id === 'root' || !window.Auth?.isAdmin ? 'none' : 'block';
     this.el.classList.remove('hidden');
   }
 
@@ -127,6 +158,11 @@ class Sidebar {
 
   save(key, value) {
     if (!this.currentNodeId) return;
+    // RBAC: only allow save if user has edit access
+    if (window.RBAC && !window.RBAC.canEditNode(this.currentNodeId)) {
+      window.app?.showToast('⛔ View only — you don\'t have edit access to this task', 'error');
+      return;
+    }
     this.data.updateNode(this.currentNodeId, { [key]: value });
   }
 
@@ -184,6 +220,94 @@ class Sidebar {
     const subtasks = node.subtasks.filter(st => st.id !== id);
     this.data.updateNode(this.currentNodeId, { subtasks });
     this.renderSubtasks(subtasks);
+  }
+
+  // ── Collaborators ───────────────────────────────────────────────────────────
+  renderCollaborators(collaborators, node) {
+    if (!this.collabList) return;
+    this.collabList.innerHTML = '';
+    if (!collaborators.length) {
+      this.collabList.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:4px 0">No collaborators yet.</div>';
+      return;
+    }
+    collaborators.forEach(uid => {
+      // Try to find user name
+      const users = window._cachedUsers || [];
+      const u = users.find(u => u.id === uid);
+      const label = u ? u.name : uid;
+      const chip = document.createElement('div');
+      chip.className = 'assignee-chip';
+      chip.innerHTML = `${label}<span class="remove-assignee" title="Remove">✕</span>`;
+      chip.querySelector('.remove-assignee').onclick = () => this.removeCollaborator(uid);
+      this.collabList.appendChild(chip);
+    });
+  }
+
+  addCollaborator(userId) {
+    const node = this.data.getNode(this.currentNodeId);
+    const collabs = [...(node.collaborators || [])];
+    if (!collabs.includes(userId)) {
+      collabs.push(userId);
+      this.data.updateNode(this.currentNodeId, { collaborators: collabs });
+      this.renderCollaborators(collabs, node);
+    }
+  }
+
+  removeCollaborator(userId) {
+    const node = this.data.getNode(this.currentNodeId);
+    const collabs = (node.collaborators || []).filter(id => id !== userId);
+    this.data.updateNode(this.currentNodeId, { collaborators: collabs });
+    this.renderCollaborators(collabs, node);
+  }
+
+  // ── Owner display ─────────────────────────────────────────────────────────
+  renderOwner(node) {
+    if (!this.ownerDisplay) return;
+    if (node.ownerName) {
+      this.ownerDisplay.innerHTML = `<span class="assignee-chip" style="pointer-events:none">${node.ownerName} 🔑</span>`;
+    } else if (node.createdBy === 'system' || !node.createdBy) {
+      this.ownerDisplay.innerHTML = '<span style="font-size:12px;color:var(--text-muted)">System / Admin</span>';
+    } else {
+      this.ownerDisplay.innerHTML = `<span class="assignee-chip" style="pointer-events:none">${node.createdBy}</span>`;
+    }
+  }
+
+  // ── Smart deadline suggest ──────────────────────────────────────────────
+  _suggestDeadline() {
+    const node = this.data.getNode(this.currentNodeId);
+    if (!node) return;
+    if (node.dueDate) {
+      window.app?.showToast('Deadline already set. Clear it first to suggest a new one.', 'info');
+      return;
+    }
+    const today = new Date();
+    const DAYS = { critical: 3, high: 7, medium: 14, low: 30 };
+    const days = DAYS[node.priority] || 14;
+    today.setDate(today.getDate() + days);
+    const suggested = today.toISOString().slice(0, 10);
+    this.dueDateInput.value = suggested;
+    this.save('dueDate', suggested);
+    window.app?.showToast(`✨ Deadline set to ${suggested} (${days} days for ${node.priority || 'medium'} priority)`, 'success');
+  }
+
+  // ── Populate user list for collaborator dropdown ─────────────────────────
+  async _refreshUserList() {
+    try {
+      const r = await fetch('/api/users');
+      const { users } = await r.json();
+      window._cachedUsers = users || [];
+
+      if (this.addCollabSelect) {
+        this.addCollabSelect.innerHTML = '<option value="">+ Add collaborator...</option>';
+        (users || []).forEach(u => {
+          if (u.id !== window.Auth?.userId) {
+            this.addCollabSelect.innerHTML += `<option value="${u.id}">${u.name} (${u.role})</option>`;
+          }
+        });
+      }
+    } catch(e) {
+      console.warn('[Sidebar] Could not load users:', e.message);
+    }
   }
 
   // ── Assignees ───────────────────────────────────────────────────────────────

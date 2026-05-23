@@ -46,7 +46,13 @@ class MindMap {
 
       if (e.key === 'Tab') {
         e.preventDefault();
-        const newNode = this.data.addNode(this.selectedNodeId, { label: 'New Task' });
+        const user = window.Auth?.currentUser;
+        const newNode = this.data.addNode(this.selectedNodeId, {
+          label: 'New Task',
+          createdBy: user?.id || null,
+          ownerName: user?.name || null,
+          collaborators: [],
+        });
         this.selectNode(newNode.id);
       } else if (e.key === 'Enter') {
         e.preventDefault();
@@ -270,15 +276,38 @@ class MindMap {
       let totalWidth = textWidth + 50; // padding
       if (totalWidth < 120) totalWidth = 120;
       
-      const isDone = d.data.status === 'done';
-      
+      const STATUS_FILLS = {
+        not_started: '#ffffff',
+        in_progress: '#eff6ff',
+        in_review:   '#fef9c3',
+        need_support:'#fff7ed',
+        blocked:     '#fef2f2',
+        done:        '#f0fdf4',
+        cancelled:   '#f8fafc',
+      };
+      const STATUS_STROKES = {
+        not_started: null,         // uses dept color
+        in_progress: '#3b82f6',
+        in_review:   '#eab308',
+        need_support:'#f97316',
+        blocked:     '#ef4444',
+        done:        '#22c55e',
+        cancelled:   '#94a3b8',
+      };
+
+      const fill   = STATUS_FILLS[d.data.status]   || '#ffffff';
+      const stroke = STATUS_STROKES[d.data.status] || this.getNodeColor(d);
+
+      g.attr('data-node-id', d.data.id);
+
       g.select('.mm-node-rect')
         .attr('width', totalWidth)
         .attr('x', 0)
-        .attr('fill', isDone ? '#d1fae5' : '#ffffff')
-        .attr('stroke', this.getNodeColor(d))
-        .attr('stroke-width', 2);
-        
+        .attr('fill', fill)
+        .attr('stroke', stroke)
+        .attr('stroke-width', 2)
+        .attr('opacity', (d.data.status === 'done' || d.data.status === 'cancelled') ? 0.55 : 1);
+
       g.select('.mm-collapse-btn')
         .style('display', d.data._childCount > 0 ? 'block' : 'none')
         .attr('transform', `translate(${totalWidth + 10}, 0)`);
@@ -294,6 +323,8 @@ class MindMap {
     });
 
     this.updateSelection();
+    // Reapply view mode filters after every render
+    setTimeout(() => window.ViewMode?.refresh(), 50);
   }
 
   selectNode(id) {

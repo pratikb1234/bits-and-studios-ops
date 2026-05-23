@@ -62,6 +62,17 @@ loadFromDisk();
 // ── User store (init after disk load so users are in sharedState) ───────────────
 const userStore = new UserStore(sharedState, saveToDisk);
 
+// ── Gemini API key (persisted: env var > disk storage > empty) ────────────────────
+let cachedGeminiKey = process.env.GEMINI_API_KEY || sharedState.settings?.geminiApiKey || '';
+if (cachedGeminiKey) {
+  console.log('[Server] Gemini API key ready (length:', cachedGeminiKey.length, ')');
+} else {
+  console.warn('[Server] ⚠️  No Gemini API key found. Set GEMINI_API_KEY env var on Render or save in ⚙️ Settings.');
+}
+
+// ── Agent Job Queue (singleton) ──────────────────────────────────────────────
+const agentQueue = new AgentJobQueue();
+
 // ── Auth middleware ─────────────────────────────────────────────────────
 function requireAdmin(req, res, next) {
   const token = req.headers['x-session-token'] || req.query._token;
@@ -81,12 +92,6 @@ function getSession(req) {
 // ── Approval tokens store ────────────────────────────────────────────────────
 // { token → { tasks, meetingTitle, assignee, status, createdAt } }
 const pendingApprovals = new Map();
-
-// ── Gemini API key (server-side cache) ───────────────────────────────────────
-let cachedGeminiKey = process.env.GEMINI_API_KEY || '';
-
-// ── Agent Job Queue (singleton) ──────────────────────────────────────────────
-const agentQueue = new AgentJobQueue();
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // AUTH ENDPOINTS
@@ -149,17 +154,36 @@ app.delete('/api/users/:id', requireAdmin, (req, res) => {
   res.json({ ok });
 });
 
-// ── /api/save-key — store Gemini key server-side ─────────────────────────────
+// ── /api/save-key — store Gemini key server-side (persisted to disk) ──────────
 app.post('/api/save-key', (req, res) => {
   const { geminiApiKey } = req.body || {};
-  if (geminiApiKey) {
-    cachedGeminiKey = geminiApiKey;
-    console.log('[Server] Gemini API key updated (length:', geminiApiKey.length, ')');
-    res.json({ ok: true });
-  } else {
-    res.status(400).json({ error: 'No key provided' });
-  }
+  if (!geminiApiKey) return res.status(400).json({ error: 'No key provided' });
+
+  cachedGeminiKey = geminiApiKey;
+
+  // Persist to collab-data.json so key survives server restarts/redeploys
+  if (!sharedState.settings) sharedState.settings = {};
+  sharedState.settings.geminiApiKey = geminiApiKey;
+  saveToDisk();
+
+  console.log('[Server] Gemini API key saved to disk (length:', geminiApiKey.length, ')');
+  res.json({ ok: true });
 });
+
+// ── Load API key from disk on startup ─────────────────────────────────────────
+// (runs after loadFromDisk + UserStore init)
+function loadApiKeyFromDisk() {
+  // Priority: env var > disk > empty
+  if (process.env.GEMINI_API_KEY) {
+    cachedGeminiKey = process.env.GEMINI_API_KEY;
+    console.log('[Server] Gemini API key loaded from environment variable');
+  } else if (sharedState.settings?.geminiApiKey) {
+    cachedGeminiKey = sharedState.settings.geminiApiKey;
+    console.log('[Server] Gemini API key loaded from disk (length:', cachedGeminiKey.length, ')');
+  } else {
+    console.warn('[Server] ⚠️  No Gemini API key found. Set GEMINI_API_KEY env var on Render, or save it via Settings.');
+  }
+}
 
 // ── /api/list-models — list available Gemini models ───────────────────────────
 app.get('/api/list-models', async (req, res) => {

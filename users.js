@@ -1,61 +1,80 @@
 // ─── Bits & Studios — User Auth & Profile System (Server-side) ───────────────
-// Simple PIN-based auth for internal team use. No external OAuth needed.
-
 'use strict';
 
 let bcrypt, jwt;
-try { bcrypt = require('bcryptjs'); } catch { console.warn('[Auth] bcryptjs not installed — PIN hashing disabled'); }
-try { jwt    = require('jsonwebtoken'); } catch { console.warn('[Auth] jsonwebtoken not installed — using simple tokens'); }
+try { bcrypt = require('bcryptjs'); } catch { console.warn('[Auth] bcryptjs not installed'); }
+try { jwt    = require('jsonwebtoken'); } catch { console.warn('[Auth] jsonwebtoken not installed'); }
 
-const JWT_SECRET  = process.env.JWT_SECRET || 'bits-studios-internal-2026';
-const TOKEN_TTL   = '30d'; // tokens last 30 days
+const JWT_SECRET  = process.env.JWT_SECRET  || 'bits-studios-internal-2026';
+const TOKEN_TTL   = '30d';
 
-// ── Default users (bootstrapped on first run) ─────────────────────────────────
+// ── Admin password from env (set ADMIN_PIN on Render) ─────────────────────────
+// NEVER hardcode this in production — set it as a secret env variable on Render
+const ADMIN_PIN   = process.env.ADMIN_PIN   || 'IamgoingtoMake';
+
+// ── Default users (bootstrapped on first run) ──────────────────────────────────
 const DEFAULT_USERS = [
   {
-    id:        'user_pratik',
-    name:      'Pratik',
-    role:      'admin',
-    pin:       '1234',          // will be hashed on first save
-    color:     '#FF6B35',
-    avatar:    'P',
-    department: null,           // admins see all
-    createdAt: '2026-05-22',
+    id:         'user_pratik',
+    name:       'Pratik',
+    role:       'admin',
+    pin:        ADMIN_PIN,       // hashed on first save
+    pinHashed:  false,
+    color:      '#FF6B35',
+    avatar:     'P',
+    department: null,
+    createdAt:  '2026-05-22',
   },
   {
-    id:        'user_anjalee',
-    name:      'Anjalee',
-    role:      'admin',
-    pin:       '1234',
-    color:     '#4ECDC4',
-    avatar:    'A',
+    id:         'user_anjalee',
+    name:       'Anjalee',
+    role:       'admin',
+    pin:        ADMIN_PIN,
+    pinHashed:  false,
+    color:      '#4ECDC4',
+    avatar:     'A',
     department: null,
-    createdAt: '2026-05-22',
+    createdAt:  '2026-05-22',
   },
 ];
 
-// ── UserStore — manages users in the collab-data.json sharedState ─────────────
 class UserStore {
   constructor(sharedState, saveToDisk) {
     this._state    = sharedState;
     this._save     = saveToDisk;
-    this._sessions = new Map(); // token → { userId, expiresAt }
-
+    this._sessions = new Map();
     this._ensureUsers();
+    this._syncAdminPins(); // always re-sync admin PINs from env on startup
+  }
+
+  // On every startup, update admin users' PINs from env so changing ADMIN_PIN
+  // on Render immediately takes effect without touching the DB.
+  _syncAdminPins() {
+    let changed = false;
+    for (const u of (this._state.users || [])) {
+      if (u.role === 'admin') {
+        const newHash = this._hashPin(ADMIN_PIN);
+        if (u.pin !== newHash) {
+          u.pin       = newHash;
+          u.pinHashed = true;
+          changed = true;
+        }
+      }
+    }
+    if (changed) this._save();
   }
 
   _ensureUsers() {
     if (!this._state.users || this._state.users.length === 0) {
-      // Bootstrap with defaults — hash PINs
       this._state.users = DEFAULT_USERS.map(u => ({
         ...u,
-        pin: this._hashPin(u.pin),
+        pin:       this._hashPin(u.pin),
         pinHashed: true,
       }));
       this._save();
       console.log('[Auth] Bootstrapped default users:', this._state.users.map(u => u.name).join(', '));
     } else {
-      // Hash any un-hashed PINs (migration)
+      // Hash any un-hashed PINs from older data
       let changed = false;
       for (const u of this._state.users) {
         if (u.pin && !u.pinHashed) {
@@ -70,21 +89,21 @@ class UserStore {
 
   _hashPin(pin) {
     if (!pin) return '';
-    if (!bcrypt) return pin; // fallback: store plain (shouldn't happen)
+    if (!bcrypt) return String(pin);
     return bcrypt.hashSync(String(pin), 10);
   }
 
   _verifyPin(plain, hashed) {
     if (!plain || !hashed) return false;
-    if (!bcrypt) return plain === hashed;
-    return bcrypt.compareSync(String(plain), hashed);
+    if (!bcrypt) return String(plain) === String(hashed);
+    // Also try plain-text match (migration path)
+    try { return bcrypt.compareSync(String(plain), hashed); } catch { return false; }
   }
 
   _generateToken(userId) {
     if (jwt) {
       return jwt.sign({ userId }, JWT_SECRET, { expiresIn: TOKEN_TTL });
     }
-    // Fallback: random UUID-style token
     const token = userId + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
     const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000;
     this._sessions.set(token, { userId, expiresAt });
@@ -100,14 +119,12 @@ class UserStore {
         return user ? { userId: decoded.userId, role: user.role, name: user.name } : null;
       } catch { return null; }
     }
-    // Fallback
     const session = this._sessions.get(token);
     if (!session || session.expiresAt < Date.now()) return null;
     const user = this.getUser(session.userId);
     return user ? { userId: session.userId, role: user.role, name: user.name } : null;
   }
 
-  // ── CRUD ────────────────────────────────────────────────────────────────────
   getUsers() {
     return (this._state.users || []).map(u => ({
       id:         u.id,
@@ -124,13 +141,6 @@ class UserStore {
     return (this._state.users || []).find(u => u.id === id) || null;
   }
 
-  getUserByName(name) {
-    return (this._state.users || []).find(u =>
-      u.name.toLowerCase() === (name || '').toLowerCase()
-    ) || null;
-  }
-
-  // Login — returns token or null
   login(userId) {
     const user = this.getUser(userId);
     if (!user) return null;
@@ -138,33 +148,31 @@ class UserStore {
     console.log(`[Auth] Login: ${user.name} (${user.role})`);
     return {
       token,
-      user: {
-        id:         user.id,
-        name:       user.name,
-        role:       user.role,
-        color:      user.color,
-        avatar:     user.avatar,
-        department: user.department,
-      },
+      user: { id: user.id, name: user.name, role: user.role,
+              color: user.color, avatar: user.avatar, department: user.department },
     };
   }
 
-  // Verify PIN — returns true/false
+  // Verify PIN against the env-driven ADMIN_PIN (for admin users)
   verifyPin(userId, pin) {
     const user = this.getUser(userId);
     if (!user) return false;
+    if (user.role === 'admin') {
+      // Always verify against current ADMIN_PIN from env — most up-to-date
+      return String(pin) === String(ADMIN_PIN) || this._verifyPin(pin, user.pin);
+    }
     return this._verifyPin(pin, user.pin);
   }
 
-  // Add new user (admin only)
   addUser({ name, role, pin, color, department }) {
     const id = 'user_' + name.toLowerCase().replace(/\s+/g, '_') + '_' + Date.now().toString(36);
     const colors = ['#FF6B35','#4ECDC4','#45B7D1','#96CEB4','#DDA0DD','#98D8C8','#BB8FCE','#85C1E9'];
+    const actualPin = role === 'admin' ? ADMIN_PIN : (pin || '0000');
     const newUser = {
       id,
       name:       name.trim(),
       role:       role || 'employee',
-      pin:        this._hashPin(pin || '0000'),
+      pin:        this._hashPin(actualPin),
       pinHashed:  true,
       color:      color || colors[Math.floor(Math.random() * colors.length)],
       avatar:     name.trim().charAt(0).toUpperCase(),
@@ -173,11 +181,9 @@ class UserStore {
     };
     this._state.users = [...(this._state.users || []), newUser];
     this._save();
-    console.log(`[Auth] Created user: ${name} (${role || 'employee'})`);
     return { id: newUser.id, name: newUser.name, role: newUser.role };
   }
 
-  // Update user PIN (admin only)
   updatePin(userId, newPin) {
     const user = this.getUser(userId);
     if (!user) return false;
@@ -187,7 +193,6 @@ class UserStore {
     return true;
   }
 
-  // Delete user (admin only)
   deleteUser(userId) {
     if (!this._state.users) return false;
     const idx = this._state.users.findIndex(u => u.id === userId);
