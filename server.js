@@ -146,12 +146,27 @@ app.get('/api/users', (req, res) => {
 });
 
 // POST /api/auth/login — select a user profile, get token
-app.post('/api/auth/login', (req, res) => {
-  const { userId } = req.body || {};
-  if (!userId) return res.status(400).json({ error: 'userId required' });
-  const result = userStore.login(userId);
-  if (!result) return res.status(404).json({ error: 'User not found' });
-  res.json(result);
+app.post('/api/save-key', (req, res) => {
+  const { key } = req.body;
+  if (!key) return res.status(400).json({ error: 'Key required' });
+  cachedGeminiKey = key;
+  if (!sharedState.settings) sharedState.settings = {};
+  sharedState.settings.geminiApiKey = key;
+  saveToDiskDebounced();
+  saveData().catch(() => {});
+  res.json({ ok: true });
+});
+
+// GET /api/check-key — returns key status + key for authenticated sessions
+// The key is org-wide: admin sets it once, all users use it
+app.get('/api/check-key', (req, res) => {
+  const key = cachedGeminiKey ||
+              process.env.GEMINI_API_KEY ||
+              sharedState.settings?.geminiApiKey || '';
+  res.json({
+    hasKey: !!key,
+    key:    key,   // All authenticated users get the key — it's org-level
+  });
 });
 
 // POST /api/auth/verify-pin — verify admin PIN for sensitive actions
@@ -892,6 +907,189 @@ io.on('connection', (socket) => {
     io.emit('peer_disconnected', { userId: socket.id });
     console.log(`[Socket] Disconnected: ${user?.name ?? socket.id}`);
   });
+});
+
+// ── Sprint Seeder ─────────────────────────────────────────────────────────────
+app.post('/api/admin/seed-sprint', requireAdmin, async (req, res) => {
+  try {
+    const { TEAM, DOCS, MEETINGS, STANDUP, SPRINT } = require('./seed-sprint');
+    const crypto = require('crypto');
+    const uid = () => crypto.randomBytes(6).toString('hex');
+
+    // 1. Find department node IDs (keep them)
+    const all = sharedState.nodes || [];
+    const deptNodeIds = new Set(
+      all.filter(n => n.parentId === 'root').map(n => n.id)
+    );
+
+    // 2. Delete ALL non-root, non-dept nodes
+    const kept = all.filter(n => n.id === 'root' || deptNodeIds.has(n.id));
+    sharedState.nodes = kept;
+
+    // Update root label
+    const root = sharedState.nodes.find(n => n.id === 'root');
+    if (root) {
+      root.label = 'Bits & Studios';
+      root.description = SPRINT.goal;
+    }
+
+    // Dept key → node id map
+    const deptIdMap = {};
+    sharedState.nodes.forEach(n => {
+      if (n.parentId === 'root') deptIdMap[n.department] = n.id;
+    });
+
+    // Dept name → key mapping (handle 'curriculum' dept which may not exist)
+    const DEPT_NAME_MAP = {
+      marketing:  'marketing',
+      operations: 'operations',
+      curriculum: 'curriculum',
+      community:  'community',
+      management: 'management',
+      technology: 'technology',
+      finance:    'finance',
+    };
+
+    // Create missing dept nodes
+    for (const deptKey of ['curriculum','management','community','technology']) {
+      if (!deptIdMap[deptKey]) {
+        const deptLabels = {
+          curriculum: 'Curriculum', management: 'Management',
+          community: 'Community', technology: 'Technology',
+        };
+        const deptNode = {
+          id: 'dept_' + deptKey,
+          label: deptLabels[deptKey] || deptKey,
+          parentId: 'root',
+          department: deptKey,
+          status: 'in_progress',
+          icon: { curriculum:'🎓', management:'🏢', community:'🤝', technology:'💻' }[deptKey] || '📂',
+          createdAt: Date.now(),
+        };
+        sharedState.nodes.push(deptNode);
+        deptIdMap[deptKey] = deptNode.id;
+      }
+    }
+
+    // 3. Upsert team members
+    if (!sharedState.users) sharedState.users = [];
+    for (const member of TEAM) {
+      const existing = sharedState.users.find(u => u.id === member.id);
+      if (!existing) {
+        sharedState.users.push({
+          ...member,
+          pin:      '1234',  // default PIN — admin should change via Manage Team
+          createdAt: Date.now(),
+        });
+      } else {
+        Object.assign(existing, { name: member.name, color: member.color, avatar: member.avatar });
+      }
+    }
+
+    // 4. Create a parent "Documentation Week Sprint" node under each dept used
+    const usedDepts = [...new Set(DOCS.map(d => d.dept))];
+    const sprintGroupIds = {};
+    for (const dept of usedDepts) {
+      const parentId = deptIdMap[dept];
+      if (!parentId) continue;
+      const groupId = 'sprint_' + dept;
+      // Remove existing sprint group if present (idempotent)
+      sharedState.nodes = sharedState.nodes.filter(n => n.id !== groupId);
+      const groupNode = {
+        id:          groupId,
+        parentId,
+        label:       { marketing:'Brand + Marketing Docs', operations:'Operations Docs', curriculum:'Curriculum Docs' }[dept] || dept + ' Docs',
+        icon:        '📁',
+        department:  dept,
+        status:      'not_started',
+        description: `Documentation Week Sprint — May 24-30, 2026`,
+        createdAt:   Date.now(),
+        createdBy:   'system',
+        ownerName:   'Admin',
+        collaborators: [],
+      };
+      sharedState.nodes.push(groupNode);
+      sprintGroupIds[dept] = groupId;
+    }
+
+    // 5. Create all 19 document nodes
+    for (const doc of DOCS) {
+      const nodeId = 'doc_' + uid();
+      const deptKey = DEPT_NAME_MAP[doc.dept] || doc.dept;
+      const parentId = sprintGroupIds[deptKey] || deptIdMap[deptKey] || 'root';
+      sharedState.nodes.push({
+        id:           nodeId,
+        parentId,
+        label:        doc.label,
+        description:  doc.description,
+        icon:         doc.icon || '📄',
+        department:   deptKey,
+        status:       doc.status || 'not_started',
+        priority:     doc.priority || 'high',
+        dueDate:      doc.dueDate,
+        assignees:    [doc.owner],
+        support:      doc.support,
+        area:         doc.area,
+        meetingDate:  doc.meetingDate,
+        createdBy:    doc.ownerId,
+        ownerName:    doc.owner,
+        collaborators:[],
+        createdAt:    Date.now(),
+      });
+    }
+
+    // 6. Create standup node
+    const standupParent = deptIdMap['management'] || 'root';
+    sharedState.nodes.push({
+      id:          'standup_daily',
+      parentId:    standupParent,
+      label:       STANDUP.label,
+      description: STANDUP.description,
+      icon:        STANDUP.icon,
+      department:  'management',
+      status:      'in_progress',
+      priority:    'high',
+      assignees:   STANDUP.assignees,
+      createdBy:   'system',
+      ownerName:   'Team',
+      collaborators:[],
+      createdAt:   Date.now(),
+    });
+
+    // 7. Create meeting nodes
+    for (const mtg of MEETINGS) {
+      const parentId = deptIdMap[mtg.dept] || deptIdMap['management'] || 'root';
+      sharedState.nodes.push({
+        id:          'mtg_' + uid(),
+        parentId,
+        label:       mtg.label,
+        description: `Duration: ${mtg.duration}`,
+        icon:        mtg.icon || '📅',
+        department:  mtg.dept,
+        status:      'not_started',
+        dueDate:     mtg.dueDate,
+        assignees:   mtg.assignees,
+        createdBy:   'system',
+        ownerName:   'Admin',
+        collaborators:[],
+        createdAt:   Date.now(),
+      });
+    }
+
+    await saveData();
+    io.emit('state_update', { nodes: sharedState.nodes });
+
+    res.json({
+      ok:    true,
+      nodes: sharedState.nodes.length,
+      docs:  DOCS.length,
+      team:  TEAM.length,
+      msg:   `Sprint seeded: ${DOCS.length} documents, ${MEETINGS.length} meetings, standup, ${TEAM.length} team members`,
+    });
+  } catch (e) {
+    console.error('[Seed] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── Start (async boot so MongoDB loads before requests) ──────────────────────

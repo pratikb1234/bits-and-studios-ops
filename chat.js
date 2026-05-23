@@ -117,13 +117,39 @@ class ChatPanel {
   }
 
   // ── Key management ────────────────────────────────────────────────────────
+  // Checks org-level key from server (admin sets once, all users benefit)
+  async _checkOrgKey() {
+    try {
+      const r = await fetch('/api/check-key');
+      const { hasKey, key } = await r.json();
+      if (hasKey && key) {
+        this.api.setApiKey(key);
+        this._orgKeyReady = true;
+        return true;
+      }
+    } catch {}
+    // Fallback to local settings (admin-only legacy path)
+    const s = this.data.getSettings();
+    const localKey = s.geminiApiKey || s.anthropicApiKey || '';
+    if (localKey) {
+      this.api.setApiKey(localKey);
+      this._orgKeyReady = true;
+      return true;
+    }
+    this._orgKeyReady = false;
+    return false;
+  }
+
   _syncKey() {
+    // Return cached state synchronously (populated by _checkOrgKey)
+    if (this._orgKeyReady) return 'org_key_set'; // truthy sentinel
+    // Try local as fallback
     const s = this.data.getSettings();
     const key = s.geminiApiKey || s.anthropicApiKey || '';
-    this.api.setApiKey(key);
+    if (key) this.api.setApiKey(key);
     return key;
   }
-  get _hasKey() { return !!this._syncKey(); }
+  get _hasKey() { return this._orgKeyReady || !!this._syncKey(); }
 
   // ── Persona bar ───────────────────────────────────────────────────────────
   _renderPersonaBar() {
@@ -338,16 +364,46 @@ ${idRef}
 
   render() {
     const hasKey = this._hasKey;
-    this.apiKeyPrompt?.classList.toggle('hidden', hasKey);
-    this.msgCont.style.display = hasKey ? 'flex' : 'none';
+    const isAdmin = window.Auth?.isAdmin;
 
-    if (hasKey) {
-      this._clearMessages();
-      if (!this.messages.length) {
-        this._addPersonaGreeting();
-      } else {
-        this.messages.forEach(m => this._addMsgToUI(m));
+    if (!hasKey) {
+      // Admin sees the key setup prompt; employees see a friendly locked state
+      if (this.apiKeyPrompt) {
+        this.apiKeyPrompt.classList.toggle('hidden', !isAdmin);
       }
+      // Employee fallback message
+      let empMsg = document.getElementById('jarvis-no-key-msg');
+      if (!isAdmin) {
+        if (!empMsg) {
+          empMsg = document.createElement('div');
+          empMsg.id = 'jarvis-no-key-msg';
+          empMsg.className = 'jarvis-no-key-msg';
+          empMsg.innerHTML = `
+            <div class="jnk-icon">🛡️</div>
+            <div class="jnk-title">Jarvis is warming up</div>
+            <div class="jnk-sub">Your admin is setting up the AI key.<br>Come back in a moment!</div>
+          `;
+          this.el.querySelector('.chat-body')?.appendChild(empMsg);
+        }
+        empMsg.style.display = 'flex';
+      } else {
+        if (empMsg) empMsg.style.display = 'none';
+      }
+      this.msgCont.style.display = 'none';
+      return;
+    }
+
+    // Key is present — hide setup UI, show chat
+    if (this.apiKeyPrompt) this.apiKeyPrompt.classList.add('hidden');
+    const empMsg = document.getElementById('jarvis-no-key-msg');
+    if (empMsg) empMsg.style.display = 'none';
+    this.msgCont.style.display = 'flex';
+
+    this._clearMessages();
+    if (!this.messages.length) {
+      this._addPersonaGreeting();
+    } else {
+      this.messages.forEach(m => this._addMsgToUI(m));
     }
     this.scrollToBottom();
   }
@@ -372,14 +428,26 @@ ${idRef}
       this.sendBtn.disabled = !this.inputField.value.trim();
     });
 
-    this.saveKeyBtn?.addEventListener('click', () => {
+    this.saveKeyBtn?.addEventListener('click', async () => {
       const key = this.apiKeyInput?.value?.trim();
-      if (key) {
+      if (!key) return;
+      try {
+        // Save org-wide on the server (persists across deploys)
+        const r = await fetch('/api/save-key', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Session-Token': window.Auth?.token || '' },
+          body: JSON.stringify({ key }),
+        });
+        if (!r.ok) throw new Error('Server rejected key');
+        // Also cache locally for this session
         const s = this.data.getSettings();
         this.data.saveSettings({ ...s, geminiApiKey: key });
-        this._syncKey();
+        this.api.setApiKey(key);
+        this._orgKeyReady = true;
         this.render();
-        window.app?.showToast('✅ Gemini API key saved', 'success');
+        window.app?.showToast('✅ Gemini API key saved org-wide — all users now have Jarvis!', 'success');
+      } catch (e) {
+        window.app?.showToast('❌ Could not save key: ' + e.message, 'error');
       }
     });
   }

@@ -4160,3 +4160,84 @@ body::before {
 
 /* Mindmap container must be position:relative for overlay to anchor correctly */
 #main-content, .mindmap-wrapper { position: relative; }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   AEGIS — Security Officer Widget
+   ══════════════════════════════════════════════════════════════════════════════ */
+.aegis-widget {
+  position: fixed; bottom: 80px; left: 16px; z-index: 9000;
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px 8px 8px;
+  background: rgba(8,10,20,0.88);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--aegis-color, #22c55e); border-radius: 40px;
+  cursor: pointer; transition: all 0.3s;
+  box-shadow: 0 0 20px rgba(0,0,0,0.4);
+  animation: aegisGlow 4s ease-in-out infinite; user-select: none;
+}
+.aegis-widget:hover { transform: translateX(4px); box-shadow: 0 0 24px rgba(0,0,0,0.5), 0 0 12px var(--aegis-color,#22c55e); }
+@keyframes aegisGlow {
+  0%,100% { box-shadow: 0 0 16px rgba(0,0,0,0.4); }
+  50%      { box-shadow: 0 0 24px rgba(0,0,0,0.5), 0 0 8px var(--aegis-color,#22c55e); }
+}
+.aegis-avatar { position:relative; width:36px; height:36px; flex-shrink:0; }
+.aegis-avatar-ring { position:absolute; inset:0; border-radius:50%; border:2px solid var(--aegis-color,#22c55e); animation:aegisRotate 8s linear infinite; }
+@keyframes aegisRotate { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+.aegis-avatar-core { position:absolute; inset:4px; background:rgba(0,0,0,0.6); border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:16px; }
+.aegis-pulse { position:absolute; inset:-4px; border-radius:50%; border:2px solid var(--aegis-color,#22c55e); opacity:0; animation:aegisPulseRing 4s ease-out infinite; }
+@keyframes aegisPulseRing { 0%{transform:scale(0.8);opacity:0.6} 100%{transform:scale(1.6);opacity:0} }
+.aegis-info { line-height:1.2; }
+.aegis-name { font-size:10px; font-weight:800; letter-spacing:0.15em; color:var(--aegis-color,#22c55e); text-transform:uppercase; }
+.aegis-status-line { font-size:11px; font-weight:600; color:#94a3b8; transition:color 0.4s; }
+.aegis-badge { width:20px; height:20px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:800; color:white; flex-shrink:0; }
+
+/* Log Panel */
+.aegis-log { position:fixed; bottom:130px; left:16px; z-index:8999; width:380px; max-height:60vh; background:rgba(8,10,20,0.96); backdrop-filter:blur(20px); border:1px solid rgba(255,255,255,0.1); border-radius:16px; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 24px 64px rgba(0,0,0,0.6); }
+.aegis-log-header { display:flex; align-items:flex-start; justify-content:space-between; padding:14px 16px 10px; border-bottom:1px solid rgba(255,255,255,0.07); }
+.aegis-log-title { display:flex; flex-direction:column; gap:2px; }
+.aegis-log-title>span:first-child { font-size:13px; font-weight:700; color:#f1f5f9; }
+.aegis-log-sub { font-size:10px; color:#64748b; font-weight:500; }
+.aegis-log-close { background:none; border:none; color:#64748b; font-size:16px; cursor:pointer; padding:0 4px; }
+.aegis-log-close:hover { color:#f1f5f9; }
+.aegis-log-meta { font-size:10px; color:#475569; padding:6px 16px; border-bottom:1px solid rgba(255,255,255,0.04); }
+.aegis-log-body { flex:1; overflow-y:auto; padding:8px 12px; display:flex; flex-direction:column; gap:8px; }
+.aegis-all-clear { display:flex; flex-direction:column; align-items:center; padding:24px 16px; gap:8px; text-align:center; }
+.aegis-all-clear-icon { font-size:32px; }
+.aegis-all-clear-title { font-size:14px; font-weight:700; color:#22c55e; }
+.aegis-all-clear-sub { font-size:11px; color:#64748b; }
+.aegis-empty { font-size:12px; color:#475569; padding:16px; text-align:center; }
+.aegis-finding { border-left:3px solid; border-radius:8px; padding:10px 12px; background:rgba(255,255,255,0.03); display:flex; flex-direction:column; gap:4px; }
+.aegis-finding-header { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.aegis-finding-sev { font-size:10px; font-weight:800; text-transform:uppercase; }
+.aegis-finding-id { font-size:9px; color:#475569; font-family:monospace; }
+.aegis-remediated { font-size:9px; color:#22c55e; font-weight:700; margin-left:auto; }
+.aegis-not-remediated { font-size:9px; color:#f97316; font-weight:700; margin-left:auto; }
+.aegis-finding-name { font-size:12px; font-weight:600; color:#e2e8f0; }
+.aegis-finding-msg { font-size:11px; color:#94a3b8; line-height:1.4; }
+.aegis-finding-time { font-size:10px; color:#475569; }
+.aegis-log-footer { display:flex; align-items:center; justify-content:space-between; padding:10px 16px; border-top:1px solid rgba(255,255,255,0.06); }
+.aegis-scan-now-btn { background:linear-gradient(135deg,#4f46e5,#7c3aed); color:white; border:none; border-radius:20px; padding:6px 14px; font-size:11px; font-weight:700; cursor:pointer; font-family:inherit; }
+.aegis-scan-now-btn:hover { filter:brightness(1.15); }
+.aegis-footer-note { font-size:10px; color:#475569; }
+
+/* AEGIS Notification Toast */
+.aegis-notification { position:fixed; top:70px; right:20px; z-index:10000; min-width:320px; max-width:400px; background:rgba(8,10,20,0.96); backdrop-filter:blur(20px); border-radius:14px; border:1px solid var(--notif-color,#4f46e5); box-shadow:0 8px 32px rgba(0,0,0,0.5),0 0 16px var(--notif-color,#4f46e5); padding:14px 16px; display:flex; gap:12px; align-items:flex-start; animation:notifSlideIn 0.35s cubic-bezier(0.34,1.56,0.64,1) forwards; }
+@keyframes notifSlideIn { from{transform:translateX(120%);opacity:0} to{transform:translateX(0);opacity:1} }
+.aegis-notification.removing { animation:notifSlideOut 0.25s ease forwards; }
+@keyframes notifSlideOut { to{transform:translateX(120%);opacity:0} }
+.aegis-notif-icon { font-size:22px; flex-shrink:0; }
+.aegis-notif-body { flex:1; }
+.aegis-notif-title { font-size:12px; font-weight:800; color:var(--notif-color,#4f46e5); text-transform:uppercase; letter-spacing:0.08em; }
+.aegis-notif-msg { font-size:12px; color:#e2e8f0; margin-top:3px; line-height:1.4; }
+.aegis-notif-time { font-size:10px; color:#64748b; margin-top:4px; }
+.aegis-notif-close { background:none; border:none; color:#64748b; font-size:16px; cursor:pointer; padding:0; line-height:1; flex-shrink:0; }
+.aegis-notif-close:hover { color:#f1f5f9; }
+
+/* Login PIN on login screen */
+.login-pin-wrap { display:flex; flex-direction:column; align-items:center; gap:16px; padding:16px 0; }
+
+/* Jarvis no-key message for employees */
+.jarvis-no-key-msg { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; padding:32px 20px; text-align:center; }
+.jnk-icon { font-size:36px; }
+.jnk-title { font-size:15px; font-weight:700; color:#f1f5f9; }
+.jnk-sub { font-size:12px; color:#64748b; line-height:1.5; }

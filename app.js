@@ -402,3 +402,42 @@ function _bindGlobalShortcuts() {
     }
   });
 }
+
+// ── Sprint Seeder (admin only) ────────────────────────────────────────────────
+window._seedSprint = async function() {
+  if (!window.Auth?.isAdmin) {
+    window.app?.showToast('⛔ Admin only', 'error');
+    return;
+  }
+  const confirmed = confirm(
+    '🚀 Load "Documentation Week Sprint" (May 24-30)?\n\n' +
+    'This will:\n' +
+    '• Keep department nodes (Marketing, Operations, etc.)\n' +
+    '• DELETE all existing sub-tasks\n' +
+    '• Create 19 documents + 6 meetings + daily standup\n' +
+    '• Add 7 team members (Pratik, Anjalee, Sohil, Mohit, Aryan, Mantasha, Foram)\n\n' +
+    'This cannot be undone. Continue?'
+  );
+  if (!confirmed) return;
+
+  window.app?.showToast('⏳ Loading sprint data…', 'info');
+  try {
+    const r = await fetch('/api/admin/seed-sprint', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': window.Auth?.token || '',
+      },
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Seed failed');
+    window.app?.showToast(
+      `✅ Sprint loaded! ${data.docs} docs · ${data.team} team members · Map refreshing…`,
+      'success'
+    );
+    // Reload to reflect new state
+    setTimeout(() => window.location.reload(), 1500);
+  } catch (e) {
+    window.app?.showToast('❌ Seed failed: ' + e.message, 'error');
+  }
+};
