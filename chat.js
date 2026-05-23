@@ -109,11 +109,13 @@ class ChatPanel {
     this.api            = new GeminiAPI('');
     this.messages       = this.data.getChatHistory();
     this.currentPersona = PERSONAS.gemini;
+    this._orgKeyReady   = false;
 
     this.bindEvents();
-    this._syncKey();
     this._renderPersonaBar();
-    this.render();
+
+    // Fetch org key async — render after resolved, not during constructor
+    this._checkOrgKey().then(() => this.render());
   }
 
   // ── Key management ────────────────────────────────────────────────────────

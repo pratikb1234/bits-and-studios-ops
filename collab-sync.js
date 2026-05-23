@@ -96,7 +96,14 @@
 
     // ── Receive initial state from server ──────────────────────────────────
     socket.on('init_state', ({ nodes, team }) => {
-      if (!nodes || nodes.length === 0) return;
+      if (!nodes || nodes.length === 0) {
+        // Server has no data — if admin, auto-seed the sprint
+        if (window.Auth?.isAdmin) {
+          console.log('[Collab] Empty map detected — auto-seeding sprint data...');
+          _autoSeedSprint();
+        }
+        return;
+      }
       if (!window.DB) return;
       _suppressRemoteEvents = true;
       window.DB._nodes.clear();
@@ -105,6 +112,18 @@
       window.DB.save();
       window.DB._emit('load');
       _suppressRemoteEvents = false;
+    });
+
+    // ── Server pushed fresh state (e.g. after seed) ────────────────────────
+    socket.on('state_update', ({ nodes }) => {
+      if (!nodes || !window.DB) return;
+      _suppressRemoteEvents = true;
+      window.DB._nodes.clear();
+      for (const n of nodes) window.DB._nodes.set(n.id, n);
+      window.DB.save();
+      window.DB._emit('load');
+      _suppressRemoteEvents = false;
+      window.app?.showToast('✅ Sprint data loaded!', 'success');
     });
 
     // ── Full sync (another user imported/reset) ────────────────────────────
@@ -178,6 +197,32 @@
           break;
       }
     });
+  }
+
+  // ── Auto-seed sprint data when admin finds empty map ──────────────────────
+  async function _autoSeedSprint() {
+    try {
+      setStatus('Loading sprint data…', 'connecting');
+      const r = await fetch('/api/admin/seed-sprint', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Session-Token': window.Auth?.token || '',
+        },
+      });
+      const data = await r.json();
+      if (r.ok && data.ok) {
+        setStatus('Live ●', 'live');
+        console.log('[Collab] Sprint seeded:', data.msg);
+        // state_update event will fire from server and refresh the map
+      } else {
+        console.warn('[Collab] Seed failed:', data.error);
+        setStatus('Live ●', 'live');
+      }
+    } catch (e) {
+      console.warn('[Collab] Auto-seed error:', e.message);
+      setStatus('Live ●', 'live');
+    }
   }
 
   // ── Cursor broadcasting ────────────────────────────────────────────────────

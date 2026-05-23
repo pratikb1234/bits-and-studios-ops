@@ -59,68 +59,49 @@ class App {
   }
 
   bindEvents() {
-    // Data changes -> Update UI
-    this.data.onChange((type, payload) => {
-      this.mindMap.render();
-      this.updateStats();
-      
-      // Keep sidebar in sync if node changes
-      if (this.sidebar.currentNodeId) {
-         // Don't re-render entire sidebar on every tiny keystroke save,
-         // only if structural changes or external updates happen.
-         if (['add', 'delete', 'move'].includes(type)) {
-           // Basic handle
-         }
-      }
-    });
-    
-    // Node interactions
-    this.mindMap.callbacks.onNodeSelect = (nodeId) => {
-      if (nodeId) {
-        this.sidebar.open(nodeId);
-      } else {
-        this.sidebar.close();
-      }
-    };
-    
-    this.mindMap.callbacks.onNodeDoubleTap = (node) => {
-      // Focus node
-      this.mindMap.focusNode(node.id);
-    };
-    
-    // Toolbar Actions
-    document.getElementById('tb-add-node').addEventListener('click', () => {
-      const parentId = this.mindMap.selectedNodeId || 'root';
-      const node = this.data.addNode(parentId, { label: 'New Task', icon: '📌' });
-      this.mindMap.selectNode(node.id);
-    });
-    
-    document.getElementById('tb-zoom-in').addEventListener('click', () => {
-       this.mindMap.svg.transition().call(this.mindMap.zoom.scaleBy, 1.2);
-    });
-    document.getElementById('tb-zoom-out').addEventListener('click', () => {
-       this.mindMap.svg.transition().call(this.mindMap.zoom.scaleBy, 0.8);
-    });
-    document.getElementById('tb-zoom-fit').addEventListener('click', () => {
-       this.mindMap.svg.transition().call(this.mindMap.zoom.transform, d3.zoomIdentity.translate(this.mindMap.width/2, this.mindMap.height/2).scale(0.8));
-    });
-    
-    // Settings / Export / Import
-    document.getElementById('tb-settings').addEventListener('click', () => this.showSettingsModal());
-    document.getElementById('tb-export').addEventListener('click', () => this.exportData());
-    document.getElementById('tb-import').addEventListener('click', () => {
-       document.getElementById('import-file-input').click();
-    });
-    
-    document.getElementById('import-file-input').addEventListener('change', (e) => {
-       if (e.target.files.length > 0) {
-         this.importData(e.target.files[0]);
-       }
+    const safe = (fn) => { try { fn(); } catch(e) { console.warn('[App] bindEvents error:', e.message); } };
+
+    // Data changes -> update UI (guard against null modules)
+    this.data.onChange((type) => {
+      safe(() => this.mindMap?.render());
+      safe(() => this.updateStats());
     });
 
+    // Node interactions (only if mindMap loaded)
+    if (this.mindMap) {
+      this.mindMap.callbacks.onNodeSelect = (nodeId) => {
+        safe(() => nodeId ? this.sidebar?.open(nodeId) : this.sidebar?.close());
+      };
+      this.mindMap.callbacks.onNodeDoubleTap = (node) => {
+        safe(() => this.mindMap?.focusNode(node.id));
+      };
+    }
+
+    // Toolbar — each button wrapped independently so one failure doesn't kill others
+    safe(() => document.getElementById('tb-add-node')?.addEventListener('click', () => {
+      const parentId = this.mindMap?.selectedNodeId || 'root';
+      const node = this.data.addNode(parentId, { label: 'New Task', icon: '📌' });
+      this.mindMap?.selectNode(node.id);
+    }));
+    safe(() => document.getElementById('tb-zoom-in')?.addEventListener('click', () =>
+      this.mindMap?.svg.transition().call(this.mindMap.zoom.scaleBy, 1.2)));
+    safe(() => document.getElementById('tb-zoom-out')?.addEventListener('click', () =>
+      this.mindMap?.svg.transition().call(this.mindMap.zoom.scaleBy, 0.8)));
+    safe(() => document.getElementById('tb-zoom-fit')?.addEventListener('click', () =>
+      this.mindMap?.fitView?.()));
+
+    safe(() => document.getElementById('tb-settings')?.addEventListener('click', () => this.showSettingsModal()));
+    safe(() => document.getElementById('tb-export')?.addEventListener('click', () => this.exportData()));
+    safe(() => document.getElementById('tb-import')?.addEventListener('click', () =>
+      document.getElementById('import-file-input')?.click()));
+
+    safe(() => document.getElementById('import-file-input')?.addEventListener('change', (e) => {
+       if (e.target.files.length > 0) { this.importData(e.target.files[0]); }
+    }));
+
     // ── Meeting Panel ──────────────────────────────────────────────────────
-    document.getElementById('tb-meeting').addEventListener('click', () => this.meeting.toggle());
-    document.getElementById('close-meeting').addEventListener('click',  () => this.meeting.close());
+    safe(() => document.getElementById('tb-meeting')?.addEventListener('click', () => this.meeting?.toggle()));
+    safe(() => document.getElementById('close-meeting')?.addEventListener('click', () => this.meeting?.close()));
 
     document.getElementById('mtg-process-btn').addEventListener('click', () => {
       const transcript = document.getElementById('mtg-transcript').value.trim();
