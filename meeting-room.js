@@ -1,84 +1,194 @@
-// ── Bits & Studios — Live Meeting Room v2 ──────────────────────────────────
-// Jitsi Meet (free, open-source, full Zoom/Meet feature parity) +
-// Web Speech API per-user transcription (diarized by portal identity) +
-// Socket.io team notifications + Gemini end-of-meeting AI summary
+// ── Bits & Studios — Live Meeting Room v3 ──────────────────────────────────
+// Jitsi Meet + Web Speech transcription + Server-side meeting storage
+// All meeting data saved to server — shared across all users, visible to Jarvis
 'use strict';
 
 const JITSI_DOMAIN = 'meet.jit.si';
 
 class MeetingRoom {
   constructor(dataLayer) {
-    this.data        = dataLayer;
-    this.isOpen      = false;
-    this.isStarted   = false;
-    this.roomId      = null;
-    this.nodeId      = null;
-    this.jitsi       = null;        // JitsiMeetExternalAPI instance
-    this.transcript  = [];          // [{speaker, text, color, ts}]
-    this.recognition = null;        // Web Speech API
-    this.micMuted    = false;       // mirrors Jitsi mute state
-    this.participants= new Map();   // peerId → {name, color}
+    this.data       = dataLayer;
+    this.isOpen     = false;
+    this.isStarted  = false;
+    this.meetingId  = null;   // server-side meeting record ID
+    this.roomId     = null;   // Jitsi room name
+    this.title      = null;
+    this.jitsi      = null;
+    this.transcript = [];
+    this.recognition= null;
+    this.micMuted   = false;
+    this.participants = new Map();
+    this._txFlushInterval = null;
 
-    // Cache DOM refs
     this._el = {
-      overlay:    document.getElementById('meet-room-modal'),
-      roomName:   document.getElementById('meet-room-name'),
-      roomMeta:   document.getElementById('meet-room-meta'),
-      status:     document.getElementById('meet-status-badge'),
-      jitsiWrap:  document.getElementById('jitsi-container'),
-      closeBtn:   document.getElementById('meet-room-close'),
-      linkBtn:    document.getElementById('meet-link-btn'),
-      endBtn:     document.getElementById('meet-end-btn'),
-      txBody:     document.getElementById('meet-transcript-body'),
-      txCount:    document.getElementById('meet-line-count'),
-      participantList: document.getElementById('meet-participants'),
-      summaryPnl: document.getElementById('meet-summary-panel'),
-      summaryBody:document.getElementById('meet-summary-body'),
-      saveBtn:    document.getElementById('meet-save-btn'),
-      chatInput:  document.getElementById('meet-chat-input'),
-      chatSend:   document.getElementById('meet-chat-send'),
-      chatBody:   document.getElementById('meet-chat-body'),
+      overlay:      document.getElementById('meet-room-modal'),
+      roomName:     document.getElementById('meet-room-name'),
+      roomMeta:     document.getElementById('meet-room-meta'),
+      status:       document.getElementById('meet-status-badge'),
+      jitsiWrap:    document.getElementById('jitsi-container'),
+      closeBtn:     document.getElementById('meet-room-close'),
+      linkBtn:      document.getElementById('meet-link-btn'),
+      endBtn:       document.getElementById('meet-end-btn'),
+      txBody:       document.getElementById('meet-transcript-body'),
+      txCount:      document.getElementById('meet-line-count'),
+      pList:        document.getElementById('meet-participants'),
+      summaryPnl:   document.getElementById('meet-summary-panel'),
+      summaryBody:  document.getElementById('meet-summary-body'),
+      saveBtn:      document.getElementById('meet-save-btn'),
+      chatInput:    document.getElementById('meet-chat-input'),
+      chatSend:     document.getElementById('meet-chat-send'),
+      chatBody:     document.getElementById('meet-chat-body'),
     };
 
     this._bindEvents();
     this._bindSocket();
   }
 
-  /* ── Public ─────────────────────────────────────────────────────────────── */
-  open(nodeId, label) {
-    this.nodeId = nodeId || null;
-    this.roomId = nodeId
-      ? 'bits-studios-' + nodeId.replace(/[^a-zA-Z0-9]/g, '-')
-      : 'bits-studios-' + Math.random().toString(36).slice(2, 9);
+  /* ── Open ─────────────────────────────────────────────────────────────────── */
+  async open() {
+    // Show a pre-meeting dialog to set title
+    const title = await this._showStartDialog();
+    if (title === null) return; // user cancelled
 
-    if (this._el.roomName) this._el.roomName.textContent = label || 'Live Meeting Room';
-    if (this._el.roomMeta) this._el.roomMeta.textContent = `Room: ${this.roomId}`;
+    this.title  = title;
+    this.roomId = 'bits-studios-' + title.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' + Date.now().toString(36);
 
     this._resetPanels();
-    this._el.overlay?.classList.remove('hidden');
+    if (this._el.overlay) this._el.overlay.classList.remove('hidden');
+    if (this._el.roomName) this._el.roomName.textContent = title;
+    if (this._el.roomMeta) this._el.roomMeta.textContent = 'Starting…';
     this.isOpen = true;
 
-    this._setStatus('lobby', '○ Lobby');
+    // Create server-side record first
+    await this._createMeetingOnServer();
+
+    // Broadcast to all portal users via socket
+    this._emitSocket('meet:start_session', {
+      meetingId: this.meetingId,
+      roomId:    this.roomId,
+      title:     this.title,
+      hostName:  this._me().name,
+    });
+
+    // Start Jitsi
     this._startJitsi();
+    this._setStatus('connecting', '⟳ Connecting…');
+  }
+
+  // Join an existing session (called when user clicks "Join" on the banner)
+  async joinSession(session) {
+    this.meetingId = session.meetingId;
+    this.roomId    = session.roomId;
+    this.title     = session.title;
+
+    this._resetPanels();
+    if (this._el.overlay) this._el.overlay.classList.remove('hidden');
+    if (this._el.roomName) this._el.roomName.textContent = session.title;
+    if (this._el.roomMeta) this._el.roomMeta.textContent = `Hosted by ${session.hostName}`;
+    this.isOpen = true;
+
+    // Register as participant
+    await fetch(`/api/meetings/${this.meetingId}`, {
+      method:  'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ participant: this._me().name }),
+    }).catch(() => {});
+
+    this._startJitsi();
+    this._setStatus('connecting', '⟳ Connecting…');
   }
 
   close() {
     this._stopTranscription();
-    if (this.jitsi) { try { this.jitsi.dispose(); } catch(e) {} this.jitsi = null; }
+    clearInterval(this._txFlushInterval);
+    if (this.jitsi) { try { this.jitsi.dispose(); } catch(e){} this.jitsi = null; }
     if (this._el.jitsiWrap) this._el.jitsiWrap.innerHTML = '';
-    this._el.overlay?.classList.add('hidden');
-    this.isOpen    = false;
-    this.isStarted = false;
-    this._emitSocket('meet:leave', { roomId: this.roomId, name: this._me().name });
+    if (this._el.overlay)   this._el.overlay.classList.add('hidden');
+    this.isOpen = this.isStarted = false;
   }
 
-  toggle(nodeId, label) {
-    this.isOpen ? this.close() : this.open(nodeId, label);
+  toggle() { this.isOpen ? this.close() : this.open(); }
+
+  /* ── Pre-meeting dialog ─────────────────────────────────────────────────── */
+  _showStartDialog() {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'meet-start-overlay';
+      overlay.innerHTML = `
+        <div class="meet-start-dialog">
+          <div class="meet-start-icon">📹</div>
+          <div class="meet-start-title">Start a Meeting</div>
+          <div class="meet-start-sub">Give this meeting a name so the team knows what it's about</div>
+          <input class="meet-start-input" id="meet-title-input" placeholder="e.g. Sprint Review, Daily Standup, Design Review…" maxlength="80" />
+          <div class="meet-start-btns">
+            <button class="meet-start-cancel">Cancel</button>
+            <button class="meet-start-go" id="meet-start-go-btn">📹 Start Meeting</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+
+      const input   = overlay.querySelector('#meet-title-input');
+      const goBtn   = overlay.querySelector('#meet-start-go-btn');
+      const cancel  = overlay.querySelector('.meet-start-cancel');
+
+      // Suggest based on time of day
+      const h = new Date().getHours();
+      if (h < 10)      input.placeholder = 'Morning Standup';
+      else if (h < 13) input.placeholder = 'Mid-Day Check-in';
+      else if (h < 18) input.placeholder = 'Afternoon Review';
+      else             input.placeholder = 'Evening Sync';
+
+      setTimeout(() => input.focus(), 100);
+
+      const done = (val) => { overlay.remove(); resolve(val); };
+
+      goBtn.addEventListener('click', () => {
+        const t = input.value.trim();
+        done(t || input.placeholder);
+      });
+      cancel.addEventListener('click', () => done(null));
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { const t = input.value.trim(); done(t || input.placeholder); }
+        if (e.key === 'Escape') done(null);
+      });
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) done(null); });
+    });
   }
 
-  /* ── Jitsi setup ────────────────────────────────────────────────────────── */
+  /* ── Server: Create meeting record ──────────────────────────────────────── */
+  async _createMeetingOnServer() {
+    try {
+      const res = await fetch('/api/meetings', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ title: this.title, hostName: this._me().name, roomId: this.roomId }),
+      });
+      const data = await res.json();
+      this.meetingId = data.meeting?.id || null;
+      console.log('[MeetRoom] Created server meeting:', this.meetingId);
+    } catch (err) {
+      console.error('[MeetRoom] Failed to create server meeting:', err);
+    }
+  }
+
+  /* ── Flush transcript to server every 30s ────────────────────────────────── */
+  _startTxFlush() {
+    let lastFlushCount = 0;
+    this._txFlushInterval = setInterval(async () => {
+      if (!this.meetingId || this.transcript.length === lastFlushCount) return;
+      const newLines = this.transcript.slice(lastFlushCount);
+      lastFlushCount = this.transcript.length;
+      fetch(`/api/meetings/${this.meetingId}`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ transcriptLines: newLines }),
+      }).catch(() => {});
+    }, 30000);
+  }
+
+  /* ── Jitsi ──────────────────────────────────────────────────────────────── */
   async _startJitsi() {
-    // Load Jitsi External API if not present
     if (typeof JitsiMeetExternalAPI === 'undefined') {
       await this._loadScript(`https://${JITSI_DOMAIN}/external_api.js`);
     }
@@ -92,97 +202,90 @@ class MeetingRoom {
       width:      '100%',
       height:     '100%',
       configOverwrite: {
-        startWithAudioMuted:     false,
-        startWithVideoMuted:     false,
-        prejoinPageEnabled:      false,
-        disableDeepLinking:      true,
-        enableWelcomePage:       false,
-        enableClosePage:         false,
-        disableInviteFunctions:  false,
-        defaultLanguage:         'en',
-        enableNoisyMicDetection: true,
-        enableTalkWhileMuted:    true,
-        resolution:              720,
-        constraints: {
-          video: { height: { ideal: 720, max: 1080, min: 180 } }
-        },
-        // Show all toolbar buttons like a real video call app
+        startWithAudioMuted:    false,
+        startWithVideoMuted:    false,
+        prejoinPageEnabled:     false,
+        disableDeepLinking:     true,
+        enableWelcomePage:      false,
+        defaultLanguage:        'en',
+        enableNoisyMicDetection:true,
+        resolution:             720,
         toolbarButtons: [
-          'microphone', 'camera', 'desktop', 'fullscreen',
-          'fodeviceselection', 'hangup', 'profile', 'chat',
-          'recording', 'sharedvideo', 'settings', 'raisehand',
-          'videoquality', 'filmstrip', 'tileview', 'select-background',
-          'stats', 'shortcuts', 'download', 'mute-everyone',
-          'security', 'participants-pane',
+          'microphone','camera','desktop','fullscreen',
+          'fodeviceselection','hangup','profile','chat',
+          'recording','sharedvideo','settings','raisehand',
+          'videoquality','filmstrip','tileview','select-background',
+          'stats','shortcuts','download','mute-everyone','security',
+          'participants-pane',
         ],
       },
       interfaceConfigOverwrite: {
         SHOW_JITSI_WATERMARK:      false,
         SHOW_WATERMARK_FOR_GUESTS: false,
         SHOW_POWERED_BY:           false,
-        DEFAULT_REMOTE_DISPLAY_NAME: 'Team Member',
         APP_NAME:                  'Bits & Studios Meet',
-        NATIVE_APP_NAME:           'Bits & Studios',
         PROVIDER_NAME:             'Bits & Studios',
-        HIDE_INVITE_MORE_HEADER:   false,
         TOOLBAR_ALWAYS_VISIBLE:    false,
-        DISABLE_JOIN_LEAVE_NOTIFICATIONS: false,
       },
-      userInfo: {
-        displayName: me.name,
-        email:       me.email || '',
-        avatarUrl:   me.avatarUrl || '',
-      },
+      userInfo: { displayName: me.name, email: me.email || '' },
     };
 
     try {
       this.jitsi = new JitsiMeetExternalAPI(JITSI_DOMAIN, options);
       this._bindJitsiEvents();
-      this._setStatus('connecting', '⟳ Connecting…');
     } catch (err) {
-      console.error('[MeetRoom] Jitsi init failed:', err);
-      window.app?.showToast('Could not start meeting: ' + err.message, 'error');
+      this._setStatus('error', '✕ Failed');
+      window.app?.showToast('Meeting failed: ' + err.message, 'error');
     }
   }
 
   _bindJitsiEvents() {
     if (!this.jitsi) return;
 
-    // Joined the conference
-    this.jitsi.addListener('videoConferenceJoined', (data) => {
+    this.jitsi.addListener('videoConferenceJoined', () => {
       this.isStarted = true;
       this._setStatus('live', '🔴 Live');
       this._startTranscription();
-      this._emitSocket('meet:join', { roomId: this.roomId, name: this._me().name, color: this._me().color });
-      this._updateParticipant('me', { name: this._me().name + ' (You)', color: this._me().color, active: true });
-      window.app?.showToast('📹 Joined meeting — transcription started', 'success');
-    });
+      this._startTxFlush();
+      this._updateParticipant('me', { name: this._me().name + ' (You)', color: this._me().color });
+      if (this._el.roomMeta) this._el.roomMeta.textContent = `Room code: ${this.roomId.split('-').slice(-1)[0]}`;
 
-    // Someone else joined
-    this.jitsi.addListener('participantJoined', (data) => {
-      const name = data.displayName || 'Participant';
-      this._updateParticipant(data.id, { name, color: this._colorForName(name), active: true });
-      this._addSystemLine(`${name} joined the call`);
-    });
-
-    // Someone left
-    this.jitsi.addListener('participantLeft', (data) => {
-      const p = this.participants.get(data.id);
-      if (p) this._addSystemLine(`${p.name} left the call`);
-      this.participants.delete(data.id);
-      this._renderParticipants();
-    });
-
-    // Display names updated (when remote participant sets their name)
-    this.jitsi.addListener('displayNameChange', (data) => {
-      if (data.id && data.displayname) {
-        this._updateParticipant(data.id, { name: data.displayname, color: this._colorForName(data.displayname) });
+      // Register self as participant on server
+      if (this.meetingId) {
+        fetch(`/api/meetings/${this.meetingId}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ participant: this._me().name }),
+        }).catch(() => {});
       }
     });
 
-    // Mute state — pause transcription when muted
-    this.jitsi.addListener('audioMuteStatusChanged', (data) => {
-      this.micMuted = data.muted;
+    this.jitsi.addListener('participantJoined', (d) => {
+      const name = d.displayName || 'Participant';
+      this._updateParticipant(d.id, { name, color: this._colorForName(name) });
+      this._addSystemLine(`${name} joined`);
+      if (this.meetingId) {
+        fetch(`/api/meetings/${this.meetingId}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ participant: name }),
+        }).catch(() => {});
+      }
+    });
+
+    this.jitsi.addListener('participantLeft', (d) => {
+      const p = this.participants.get(d.id);
+      if (p) this._addSystemLine(`${p.name} left`);
+      this.participants.delete(d.id);
+      this._renderParticipants();
+    });
+
+    this.jitsi.addListener('displayNameChange', (d) => {
+      if (d.id && d.displayname) {
+        this._updateParticipant(d.id, { name: d.displayname, color: this._colorForName(d.displayname) });
+      }
+    });
+
+    this.jitsi.addListener('audioMuteStatusChanged', (d) => {
+      this.micMuted = d.muted;
       if (this.micMuted) {
         try { this.recognition?.stop(); } catch(e) {}
       } else if (this.isStarted) {
@@ -190,69 +293,194 @@ class MeetingRoom {
       }
     });
 
-    // Chat messages from Jitsi — show in our chat panel too
-    this.jitsi.addListener('incomingMessage', (data) => {
-      this._addChatMessage(data.from || 'Participant', data.message, false);
-    });
-    this.jitsi.addListener('outgoingMessage', (data) => {
-      this._addChatMessage(this._me().name + ' (You)', data.message, true);
-    });
+    this.jitsi.addListener('incomingMessage', (d) => this._addChatMsg(d.from || 'Participant', d.message, false));
+    this.jitsi.addListener('outgoingMessage', (d) => this._addChatMsg(this._me().name, d.message, true));
 
-    // Meeting ended (someone clicked Hangup)
-    this.jitsi.addListener('videoConferenceLeft', () => {
+    this.jitsi.addListener('videoConferenceLeft', async () => {
       this.isStarted = false;
       this._setStatus('ended', '✕ Ended');
       this._stopTranscription();
-      this._emitSocket('meet:leave', { roomId: this.roomId, name: this._me().name });
-      if (this.transcript.length > 0) this._summariseMeeting();
+      clearInterval(this._txFlushInterval);
+      this._emitSocket('meet:end_session', { roomId: this.roomId });
+      await this._endMeeting();
+    });
+  }
+
+  /* ── End meeting: save everything to server ────────────────────────────── */
+  async _endMeeting() {
+    if (!this.meetingId) { this._summarise(); return; }
+
+    // First flush all remaining transcript lines
+    await fetch(`/api/meetings/${this.meetingId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        transcriptLines: this.transcript,
+        endedAt: new Date().toISOString(),
+        status: 'completed',
+        participants: Array.from(this.participants.values()).map(p => p.name.replace(' (You)', '')),
+      }),
+    }).catch(() => {});
+
+    // Generate and save summary
+    await this._summarise();
+  }
+
+  /* ── AI Summary ─────────────────────────────────────────────────────────── */
+  async _summarise() {
+    if (!this._el.summaryPnl) return;
+    this._el.summaryPnl.classList.remove('hidden');
+    if (this._el.summaryBody) {
+      this._el.summaryBody.innerHTML = '<div class="meet-summarising"><span class="spin">✨</span> Generating summary…</div>';
+    }
+
+    // Switch to transcript tab to show summary
+    document.querySelector('[data-tab="transcript"]')?.click();
+
+    const apiKey = window._orgApiKey;
+    if (!apiKey || !this.transcript.length) {
+      if (this._el.summaryBody) this._el.summaryBody.innerHTML = '<p style="color:#64748b;font-size:12px">No transcript to summarise.</p>';
+      return;
+    }
+
+    const txText = this.transcript.map(l => `${l.speaker}: ${l.text}`).join('\n');
+    const prompt = `You are summarising a meeting for Bits & Studios — a premium Robotics + AI + Coding Makerspace, Ahmedabad, launching June 1 2026.
+
+Meeting title: "${this.title}"
+Participants: ${Array.from(this.participants.values()).map(p=>p.name).join(', ')}
+Transcript (${this.transcript.length} lines):
+${txText}
+
+Write a structured summary:
+1. **Key Decisions** — bullet list of concrete decisions
+2. **Action Items** — table: | Owner | Action | Deadline |
+3. **Discussion Highlights** — 2–3 sentences per topic
+4. **Open Questions** — unresolved items
+
+Use names. Be specific. Format in HTML with <h3>, <ul>, <li>, <table>. Content only, no preamble.`;
+
+    try {
+      const res  = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.3, maxOutputTokens: 2048 } }),
+      });
+      const data = await res.json();
+      let html = data?.candidates?.[0]?.content?.parts?.[0]?.text || 'No summary generated';
+      html = html.replace(/```html\n?/g,'').replace(/```\n?/g,'')
+                 .replace(/^#{1,6}\s+(.+)$/gm,'<h3>$1</h3>')
+                 .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').trim();
+
+      if (this._el.summaryBody) this._el.summaryBody.innerHTML = html;
+
+      // Save summary to server
+      if (this.meetingId) {
+        await fetch(`/api/meetings/${this.meetingId}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ summary: html }),
+        }).catch(() => {});
+      }
+
+      // Offer to create mindmap node
+      this._offerMindmapNode(html);
+
+    } catch (err) {
+      if (this._el.summaryBody) this._el.summaryBody.innerHTML = `<p style="color:#ef4444">Summary failed: ${err.message}</p>`;
+    }
+  }
+
+  /* ── Create mindmap node (with confirmation) ─────────────────────────────── */
+  _offerMindmapNode(summary) {
+    const overlay = document.createElement('div');
+    overlay.className = 'meet-node-offer-overlay';
+    overlay.innerHTML = `
+      <div class="meet-node-offer">
+        <div class="meet-node-offer-icon">🗂</div>
+        <div class="meet-node-offer-title">Create a Meeting Node?</div>
+        <div class="meet-node-offer-sub">
+          Add <strong>"${this.title}"</strong> to the mindmap under the 📅 Meetings node with the AI summary attached.
+        </div>
+        <div class="meet-node-offer-btns">
+          <button class="meet-node-skip">Skip</button>
+          <button class="meet-node-create">📅 Create Node</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    overlay.querySelector('.meet-node-skip').onclick = () => overlay.remove();
+    overlay.querySelector('.meet-node-create').onclick = () => {
+      overlay.remove();
+      this._createMindmapNode(summary);
+    };
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  }
+
+  _createMindmapNode(summary) {
+    // Find or create the "📅 Meetings" top-level node
+    const root = this.data.getRootNode();
+    if (!root) return;
+
+    let meetingsNode = this.data.getAllNodes().find(n =>
+      n.parentId === root.id && (n.label?.includes('Meetings') || n.icon === '📅')
+    );
+
+    if (!meetingsNode) {
+      meetingsNode = this.data.addNode(root.id, {
+        label: 'Meetings',
+        icon: '📅',
+        description: 'All team meeting records — transcripts and AI summaries stored here.',
+        status: 'not_started',
+        priority: 'medium',
+      });
+    }
+
+    // Create the meeting record node
+    const date = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    const participants = Array.from(this.participants.values()).map(p => p.name.replace(' (You)','')).join(', ');
+
+    const node = this.data.addNode(meetingsNode.id, {
+      label:       this.title,
+      icon:        '📹',
+      description: `Meeting on ${date}.\nParticipants: ${participants}\n\n[AI Summary saved — view in Meetings Panel]`,
+      status:      'done',
+      priority:    'medium',
+      meetingId:   this.meetingId,
+      meetingDate: new Date().toISOString(),
+      ownerName:   this._me().name,
     });
 
-    // Screen share
-    this.jitsi.addListener('screenSharingStatusChanged', (data) => {
-      this._addSystemLine(data.on
-        ? `${this._me().name} started screen sharing`
-        : `Screen sharing stopped`);
-    });
+    // Link back on server
+    if (this.meetingId) {
+      fetch(`/api/meetings/${this.meetingId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ linkedNodeId: node.id }),
+      }).catch(() => {});
+    }
 
-    // Recording
-    this.jitsi.addListener('recordingStatusChanged', (data) => {
-      if (data.on) window.app?.showToast('🔴 Recording started', 'info');
-    });
-
-    // Error
-    this.jitsi.addListener('errorOccurred', (data) => {
-      console.warn('[MeetRoom] Jitsi error:', data);
-    });
+    window.app?.showToast(`📅 Meeting node created under "Meetings"`, 'success');
+    window.app?.mindMap?.render(true);
   }
 
   /* ── Transcription ──────────────────────────────────────────────────────── */
   _startTranscription() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      this._addSystemLine('⚠️ Live transcription requires Chrome browser');
-      return;
-    }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { this._addSystemLine('⚠️ Transcription requires Chrome'); return; }
 
-    this.recognition = new SpeechRecognition();
-    this.recognition.continuous     = true;
+    this.recognition = new SR();
+    this.recognition.continuous = true;
     this.recognition.interimResults = true;
-    this.recognition.lang           = 'en-IN';
-    this.recognition.maxAlternatives= 1;
+    this.recognition.lang = 'en-IN';
 
     const me = this._me();
     let interimEl = null;
 
     this.recognition.onresult = (e) => {
       if (this.micMuted) return;
-
-      let interim = '';
-      let final   = '';
+      let interim = '', final = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) final += t;
-        else interim += t;
+        if (e.results[i].isFinal) final += t; else interim += t;
       }
-
       if (final.trim()) {
         interimEl?.remove(); interimEl = null;
         const line = { speaker: me.name, text: final.trim(), color: me.color, ts: Date.now() };
@@ -263,295 +491,147 @@ class MeetingRoom {
         if (!interimEl) {
           interimEl = document.createElement('div');
           interimEl.className = 'meet-tx-line meet-tx-interim';
-          interimEl.innerHTML = `<span class="meet-tx-spk" style="color:${me.color}">${me.name}</span><span class="meet-tx-txt"></span>`;
+          interimEl.innerHTML = `<span class="meet-tx-spk" style="color:${me.color}">${me.name}</span> <span class="meet-tx-txt"></span>`;
           this._el.txBody?.appendChild(interimEl);
         }
         interimEl.querySelector('.meet-tx-txt').textContent = interim;
         this._scrollTx();
       }
     };
-
-    this.recognition.onerror = (e) => {
-      if (e.error === 'no-speech' || e.error === 'aborted') return;
-      console.warn('[MeetRoom] Speech error:', e.error);
-    };
-
+    this.recognition.onerror = (e) => { if (e.error !== 'no-speech' && e.error !== 'aborted') console.warn('[MeetRoom]', e.error); };
     this.recognition.onend = () => {
-      if (this.isStarted && !this.micMuted) {
-        setTimeout(() => { try { this.recognition?.start(); } catch(e) {} }, 300);
-      }
+      if (this.isStarted && !this.micMuted) setTimeout(() => { try { this.recognition?.start(); } catch(e){} }, 300);
     };
-
     try { this.recognition.start(); } catch(e) {}
   }
 
-  _stopTranscription() {
-    try { this.recognition?.stop(); } catch(e) {}
-    this.recognition = null;
-  }
+  _stopTranscription() { try { this.recognition?.stop(); } catch(e){} this.recognition = null; }
 
-  /* ── Transcript UI ──────────────────────────────────────────────────────── */
+  /* ── UI helpers ─────────────────────────────────────────────────────────── */
   _appendTxLine(speaker, text, color, isLocal) {
     const body = this._el.txBody;
     if (!body) return;
     body.querySelector('.meet-tx-empty')?.remove();
-
-    const el  = document.createElement('div');
+    const el = document.createElement('div');
     el.className = 'meet-tx-line' + (isLocal ? ' meet-tx-mine' : '');
-    const t  = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
-    el.innerHTML = `
-      <div class="meet-tx-header">
-        <span class="meet-tx-spk" style="color:${color || '#94a3b8'}">${speaker}</span>
-        <span class="meet-tx-time">${t}</span>
-      </div>
-      <div class="meet-tx-txt">${text}</div>
-    `;
+    const t = new Date().toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit' });
+    el.innerHTML = `<div class="meet-tx-header"><span class="meet-tx-spk" style="color:${color||'#94a3b8'}">${speaker}</span><span class="meet-tx-time">${t}</span></div><div class="meet-tx-txt">${text}</div>`;
     body.appendChild(el);
     this._scrollTx();
-
     const n = body.querySelectorAll('.meet-tx-line:not(.meet-tx-interim)').length;
-    if (this._el.txCount) this._el.txCount.textContent = n + ' lines';
+    if (this._el.txCount) this._el.txCount.textContent = n;
   }
 
   _addSystemLine(msg) {
-    const body = this._el.txBody;
-    if (!body) return;
     const el = document.createElement('div');
     el.className = 'meet-tx-system';
     el.textContent = msg;
-    body.appendChild(el);
+    this._el.txBody?.appendChild(el);
     this._scrollTx();
   }
 
-  _scrollTx() {
-    if (this._el.txBody) this._el.txBody.scrollTop = this._el.txBody.scrollHeight;
-  }
+  _scrollTx() { if (this._el.txBody) this._el.txBody.scrollTop = this._el.txBody.scrollHeight; }
 
-  /* ── Chat panel ──────────────────────────────────────────────────────────── */
-  _addChatMessage(name, text, isMe) {
+  _addChatMsg(name, text, isMe) {
     const body = this._el.chatBody;
     if (!body) return;
     body.querySelector('.meet-chat-empty')?.remove();
-
     const el = document.createElement('div');
     el.className = 'meet-chat-msg' + (isMe ? ' meet-chat-mine' : '');
-    const t = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
-    el.innerHTML = `
-      <span class="meet-chat-name">${isMe ? 'You' : name}</span>
-      <div class="meet-chat-bubble">${text}</div>
-      <span class="meet-chat-time">${t}</span>
-    `;
+    const t = new Date().toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit' });
+    el.innerHTML = `<span class="meet-chat-name">${isMe ? 'You' : name}</span><div class="meet-chat-bubble">${text}</div><span class="meet-chat-time">${t}</span>`;
     body.appendChild(el);
     body.scrollTop = body.scrollHeight;
   }
 
   _sendChat() {
     const input = this._el.chatInput;
-    const text  = input?.value?.trim();
+    const text = input?.value?.trim();
     if (!text) return;
-
-    // Send via Jitsi (shows in their chat) + our panel
-    if (this.jitsi) {
-      try { this.jitsi.executeCommand('sendChatMessage', text, '', false); } catch(e) {}
-    } else {
-      // If Jitsi not active, send via Socket.io only
-      this._addChatMessage(this._me().name, text, true);
-      this._emitSocket('meet:chat', { roomId: this.roomId, name: this._me().name, text });
-    }
+    if (this.jitsi) { try { this.jitsi.executeCommand('sendChatMessage', text, '', false); } catch(e){} }
+    else { this._addChatMsg(this._me().name, text, true); this._emitSocket('meet:chat', { roomId: this.roomId, name: this._me().name, text }); }
     input.value = '';
   }
 
-  /* ── Participants panel ───────────────────────────────────────────────────── */
   _updateParticipant(id, data) {
     this.participants.set(id, { ...(this.participants.get(id) || {}), ...data });
     this._renderParticipants();
   }
 
   _renderParticipants() {
-    const el = this._el.participantList;
+    const el = this._el.pList;
     if (!el) return;
     const list = Array.from(this.participants.values());
-    if (list.length === 0) { el.innerHTML = '<div class="meet-p-empty">No one yet</div>'; return; }
-
+    if (!list.length) { el.innerHTML = '<div class="meet-p-empty">Join the call to see participants</div>'; return; }
     el.innerHTML = list.map(p => `
       <div class="meet-participant">
-        <div class="meet-p-avatar" style="background:${p.color || '#64748b'}">${(p.name || '?').charAt(0)}</div>
-        <div class="meet-p-name">${p.name || 'Unknown'}</div>
-        ${p.active ? '<div class="meet-p-live"></div>' : ''}
-      </div>
-    `).join('');
+        <div class="meet-p-avatar" style="background:${p.color||'#64748b'}">${(p.name||'?')[0]}</div>
+        <div class="meet-p-name">${p.name||'Unknown'}</div>
+        <div class="meet-p-live"></div>
+      </div>`).join('');
   }
 
-  /* ── AI Summary ─────────────────────────────────────────────────────────── */
-  async _summariseMeeting() {
-    if (!this._el.summaryPnl) return;
-    this._el.summaryPnl.classList.remove('hidden');
-    if (this._el.summaryBody) this._el.summaryBody.innerHTML = '<div class="meet-summarising"><span class="spin">✨</span> Gemini is reading the transcript…</div>';
-
-    const apiKey = window._orgApiKey;
-    if (!apiKey || this.transcript.length === 0) {
-      if (this._el.summaryBody) this._el.summaryBody.innerHTML = '<p style="color:#64748b;font-size:12px">No transcript to summarise.</p>';
-      return;
-    }
-
-    const txText = this.transcript.map(l => `${l.speaker}: ${l.text}`).join('\n');
-    const prompt = `You are summarising a business meeting for Bits & Studios — a premium Robotics + AI + Coding Makerspace launching June 1, 2026 in Ahmedabad, India.
-
-MEETING TRANSCRIPT (${this.transcript.length} lines):
-${txText}
-
-Write a clean, structured meeting summary with:
-
-1. **Key Decisions** — bulleted list of concrete decisions made
-2. **Action Items** — table format: | Owner | Action | Deadline |
-3. **Discussion Highlights** — brief paragraph per main topic
-4. **Open Questions** — things unresolved, need follow-up
-
-Rules:
-- Use real names from transcript
-- Reference specific Bits & Studios context (launch date June 1, team members, programs)
-- Be concise but complete
-- Format in HTML with <h3>, <ul>, <li>, <table>, <tr>, <th>, <td>, <strong>
-- Write only the content, no preamble`;
-
-    try {
-      const res  = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.3, maxOutputTokens: 2048 } }),
-      });
-      const data = await res.json();
-      let html = data?.candidates?.[0]?.content?.parts?.[0]?.text || 'Summary unavailable';
-      html = html.replace(/```html\n?/g,'').replace(/```\n?/g,'')
-                 .replace(/^#{1,6}\s+(.+)$/gm,'<h3>$1</h3>')
-                 .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').trim();
-      if (this._el.summaryBody) this._el.summaryBody.innerHTML = html;
-      this._persistSummary(html);
-    } catch (err) {
-      if (this._el.summaryBody) this._el.summaryBody.innerHTML = `<p style="color:#ef4444">Summary failed: ${err.message}</p>`;
-    }
+  _resetPanels() {
+    this.transcript = []; this.participants.clear();
+    if (this._el.txBody)   this._el.txBody.innerHTML  = '<div class="meet-tx-empty">Join the call to start transcription</div>';
+    if (this._el.chatBody) this._el.chatBody.innerHTML = '<div class="meet-chat-empty">Chat will appear here</div>';
+    if (this._el.txCount)  this._el.txCount.textContent = '0';
+    if (this._el.summaryPnl) this._el.summaryPnl.classList.add('hidden');
+    this._renderParticipants();
   }
 
-  _persistSummary(html) {
-    if (this.nodeId) {
-      const node = this.data.getNode(this.nodeId);
-      if (node) {
-        this.data.updateNode(this.nodeId, {
-          meetingSummary:  html,
-          transcriptLines: this.transcript.length,
-          meetingDate:     new Date().toISOString(),
-        });
-      }
-    }
-    localStorage.setItem('meet_tx_' + this.roomId, JSON.stringify(this.transcript));
-  }
-
-  _saveSummaryToNode() {
-    const node = this.nodeId ? this.data.getNode(this.nodeId) : null;
-    if (node) {
-      window.app?.showToast(`💾 Summary saved to "${node.label}"`, 'success');
-      window.app?.sidebar?.open(this.nodeId);
-    } else {
-      window.app?.showToast('💾 Summary saved locally (no node linked)', 'info');
-    }
-  }
-
-  /* ── Bindings ────────────────────────────────────────────────────────────── */
-  _bindEvents() {
-    this._el.closeBtn?.addEventListener('click',  () => this.close());
-    this._el.saveBtn?.addEventListener('click',   () => this._saveSummaryToNode());
-    this._el.endBtn?.addEventListener('click',    () => {
-      if (this.jitsi) {
-        try { this.jitsi.executeCommand('hangup'); } catch(e) {}
-      } else {
-        this.isStarted = false;
-        this._stopTranscription();
-        if (this.transcript.length > 0) this._summariseMeeting();
-      }
-    });
-    this._el.linkBtn?.addEventListener('click',   () => this._copyLink());
-    this._el.chatSend?.addEventListener('click',  () => this._sendChat());
-    this._el.chatInput?.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this._sendChat(); }
-    });
-    this._el.overlay?.addEventListener('click', (e) => {
-      if (e.target === this._el.overlay) this.close();
-    });
-  }
-
+  /* ── Socket ─────────────────────────────────────────────────────────────── */
   _bindSocket() {
     const tryBind = () => {
-      const socket = window._socket || window._agentSocket;
-      if (!socket) return;
-      socket.on('meet:transcript_line', (d) => {
+      const s = window._socket || window._agentSocket;
+      if (!s) return;
+      s.on('meet:transcript_line', (d) => {
         if (d.roomId !== this.roomId || d.speaker === this._me().name) return;
-        const line = { speaker: d.speaker, text: d.text, color: d.color, ts: d.ts };
-        this.transcript.push(line);
+        this.transcript.push(d);
         this._appendTxLine(d.speaker, d.text, d.color, false);
       });
-      socket.on('meet:chat', (d) => {
-        if (d.roomId !== this.roomId) return;
-        this._addChatMessage(d.name, d.text, false);
-      });
-      socket.on('meet:join', (d) => {
-        if (d.roomId !== this.roomId) return;
-        window.app?.showToast(`📹 ${d.name} joined the meeting`, 'info');
-      });
+      s.on('meet:chat', (d) => { if (d.roomId === this.roomId) this._addChatMsg(d.name, d.text, false); });
     };
     setTimeout(tryBind, 800);
   }
 
-  /* ── Helpers ─────────────────────────────────────────────────────────────── */
-  _me() {
-    const u = window.Auth?.currentUser;
-    return {
-      id:       u?.id    || 'anon',
-      name:     u?.name  || localStorage.getItem('bits_collab_name') || 'Me',
-      color:    u?.color || '#534AB7',
-      email:    u?.email || '',
-    };
-  }
-
-  _colorForName(name) {
-    const map = {
-      'Pratik': '#534AB7', 'Anjalee': '#1D9E75', 'Sohil': '#D85A30',
-      'Mohit':  '#378ADD', 'Aryan':   '#D4537E',  'Mantasha': '#BA7517',
-      'Foram':  '#639922',
-    };
-    for (const [key, color] of Object.entries(map)) {
-      if (name?.toLowerCase().includes(key.toLowerCase())) return color;
-    }
-    return '#64748b';
+  /* ── Misc ───────────────────────────────────────────────────────────────── */
+  _bindEvents() {
+    this._el.closeBtn?.addEventListener('click', () => this.close());
+    this._el.saveBtn?.addEventListener('click', () => {
+      const node = this.data.getNode(this._linkedNodeId);
+      window.app?.showToast(node ? `💾 Saved to "${node.label}"` : '💾 Summary saved to server', 'success');
+    });
+    this._el.endBtn?.addEventListener('click', () => {
+      if (this.jitsi) { try { this.jitsi.executeCommand('hangup'); } catch(e){} }
+    });
+    this._el.linkBtn?.addEventListener('click', () => {
+      const link = `https://${JITSI_DOMAIN}/${this.roomId}`;
+      navigator.clipboard?.writeText(link).then(() => window.app?.showToast('🔗 Link copied — share it!', 'success'));
+    });
+    this._el.chatSend?.addEventListener('click', () => this._sendChat());
+    this._el.chatInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this._sendChat(); } });
+    this._el.overlay?.addEventListener('click', (e) => { if (e.target === this._el.overlay) this.close(); });
   }
 
   _setStatus(state, text) {
-    const el = this._el.status;
-    if (!el) return;
-    el.textContent = text;
-    el.className = `meet-status-badge meet-status-${state}`;
+    if (!this._el.status) return;
+    this._el.status.textContent = text;
+    this._el.status.className = `meet-status-badge meet-status-${state}`;
   }
 
-  _copyLink() {
-    const link = `https://${JITSI_DOMAIN}/${this.roomId}`;
-    navigator.clipboard?.writeText(link).then(() => {
-      window.app?.showToast('🔗 Meeting link copied! Share with anyone', 'success');
-    });
+  _me() {
+    const u = window.Auth?.currentUser;
+    return { id: u?.id||'anon', name: u?.name||localStorage.getItem('bits_collab_name')||'Me', color: u?.color||'#534AB7', email: u?.email||'' };
   }
 
-  _emitSocket(event, data) {
-    const socket = window._socket || window._agentSocket;
-    socket?.emit?.(event, data);
+  _colorForName(name) {
+    const map = { Pratik:'#534AB7', Anjalee:'#1D9E75', Sohil:'#D85A30', Mohit:'#378ADD', Aryan:'#D4537E', Mantasha:'#BA7517', Foram:'#639922' };
+    for (const [k,v] of Object.entries(map)) if (name?.toLowerCase().includes(k.toLowerCase())) return v;
+    return '#64748b';
   }
 
-  _resetPanels() {
-    this.transcript = [];
-    this.participants.clear();
-    if (this._el.txBody)    this._el.txBody.innerHTML  = '<div class="meet-tx-empty">Join the call to start transcription</div>';
-    if (this._el.chatBody)  this._el.chatBody.innerHTML= '<div class="meet-chat-empty">Chat will appear here</div>';
-    if (this._el.txCount)   this._el.txCount.textContent = '0 lines';
-    if (this._el.summaryPnl) this._el.summaryPnl.classList.add('hidden');
-    this._renderParticipants();
-  }
+  _emitSocket(event, data) { const s = window._socket||window._agentSocket; s?.emit?.(event, data); }
 
   _loadScript(src) {
     return new Promise((resolve, reject) => {

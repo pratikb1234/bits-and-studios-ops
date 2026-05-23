@@ -189,7 +189,7 @@ class ChatPanel {
   }
 
   // ── Build full business context ───────────────────────────────────────────
-  _buildSystemPrompt() {
+  async _buildSystemPrompt() {
     const settings = this.data.getSettings();
     const team     = this.data.getTeam();
     const nodes    = this.data.getAllNodes();
@@ -253,6 +253,9 @@ When ${userName} asks "what should I work on today?", prioritize their overdue +
       `  • ${h.userName || '?'}: ${h.description} (${new Date(h.timestamp).toLocaleDateString('en-IN')})`
     ).join('\n') || '  No activity yet.';
 
+    // Meeting history from server (shared across all users — AI can reference)
+    const meetingContext = await MeetingsPanel.buildJarvisContext().catch(() => '');
+
     return `${this.currentPersona.personality}
 
 ════════════════════════════════════════════
@@ -302,7 +305,8 @@ ${idRef}
  {"action": "update_node", "id": "NODE_ID", "status": "done"}]
 </map_actions>
 - Available departments: marketing, operations, finance, curriculum, technology, community
-- Be direct, specific, and actionable. No filler. No generic advice.`;
+- Be direct, specific, and actionable. No filler. No generic advice.
+${meetingContext}`;
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -390,8 +394,8 @@ ${idRef}
     this.scrollToBottom();
 
     try {
-      // Build system prompt fresh every call (picks up latest tasks/docs)
-      const systemPrompt = this._buildSystemPrompt();
+      // Build system prompt fresh every call (picks up latest tasks/docs/meetings)
+      const systemPrompt = await this._buildSystemPrompt();
 
       const apiMessages = this.messages.map(m => ({ role: m.role, content: m.content }));
       const responseText = await this.api.sendMessage(apiMessages, systemPrompt);

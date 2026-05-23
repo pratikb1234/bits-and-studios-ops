@@ -44,7 +44,10 @@
         <button id="tb-docs" class="toolbar-btn" title="Bezos-Style Memos &amp; Documents">
           📋 <span class="btn-label">Docs</span>
         </button>
-        <button id="tb-meet-room" class="toolbar-btn meet-room-btn" title="Start / Join a live meeting room with transcription">
+        <button id="tb-meetings-archive" class="toolbar-btn" title="Meetings Archive — all past meetings with transcripts">
+          📅 <span class="btn-label">Meetings</span>
+        </button>
+        <button id="tb-meet-room" class="toolbar-btn meet-room-btn" title="Start a live meeting room with transcription">
           📹 <span class="btn-label">Live Meet</span>
         </button>
         <button id="tb-zoom-in"  class="toolbar-btn tb-icon-only" title="Zoom In (Scroll up)">+</button>
@@ -135,6 +138,34 @@
         <button class="vmb-toggle-done" onclick="window.ViewMode?.toggleDone()" title="Show / hide completed tasks">
           <span id="vmb-done-label">👁️ Hide Done</span>
         </button>
+      </div>
+    </div>
+
+    <!-- ── Active Meeting Session Banner ─────────────────────────────── -->
+    <div id="active-session-banner" class="active-session-banner hidden">
+      <div class="asb-pulse"></div>
+      <span class="asb-icon">📹</span>
+      <div class="asb-text">
+        <strong id="asb-title">Meeting in progress</strong>
+        <span id="asb-host">Started by —</span>
+      </div>
+      <div class="asb-time" id="asb-time">0:00</div>
+      <button class="asb-join-btn" id="asb-join-btn">Join Now →</button>
+      <button class="asb-dismiss" id="asb-dismiss" title="Dismiss">✕</button>
+    </div>
+
+    <!-- ── Meetings Archive Panel ─────────────────────────────────────── -->
+    <div id="meetings-archive-panel" class="meetings-archive-panel hidden">
+      <div class="map-header">
+        <div class="map-title">📅 Meetings Archive</div>
+        <div class="map-sub" id="map-sub">All team meetings — transcripts &amp; summaries</div>
+        <button class="map-close-btn" id="map-close-btn">✕</button>
+      </div>
+      <div class="map-search-row">
+        <input type="text" id="map-search" class="map-search" placeholder="Search by title, participant, or keyword…" />
+      </div>
+      <div class="map-body" id="map-body">
+        <div class="map-loading">Loading meetings…</div>
       </div>
     </div>
 
@@ -590,6 +621,7 @@ Decided: Launch event on June 1st confirmed."></textarea>
   <script src="agent.js"></script>
   <script src="view-mode.js"></script>
   <script src="aegis.js"></script>
+  <script src="meetings-panel.js"></script>
   <script src="meeting-room.js"></script>
   <script src="app.js"></script>
 

@@ -101,7 +101,10 @@ class App {
 
     // ── Live Meeting Room ───────────────────────────────────────────────────
     this.meetRoom = new MeetingRoom(this.data);
-    document.getElementById('tb-meet-room')?.addEventListener('click', () => this.meetRoom.toggle());
+    document.getElementById('tb-meet-room')?.addEventListener('click', () => this.meetRoom.open());
+
+    this.meetingsPanel = new MeetingsPanel();
+    document.getElementById('tb-meetings-archive')?.addEventListener('click', () => this.meetingsPanel.toggle());
 
     // Meeting room tab switcher
     document.querySelectorAll('.meet-tab').forEach(tab => {

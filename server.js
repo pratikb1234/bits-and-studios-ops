@@ -42,7 +42,8 @@ if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 app.use(express.static(__dirname));
 
 // ── Persistent shared state ──────────────────────────────────────────────────
-let sharedState = { nodes: null, team: [] };
+let sharedState = { nodes: null, team: [], meetings: [] };
+let activeSession = null; // { meetingId, roomId, hostName, title, startedAt }
 
 function loadFromDisk() {
   try {
@@ -252,6 +253,90 @@ app.get('/api/state', (req, res) => {
     }
   }
   res.json({ nodes: sharedState.nodes || [], users: sharedState.users || [] });
+});
+
+// ── Meetings API ──────────────────────────────────────────────────────────────
+
+// GET /api/meetings — all meetings (newest first)
+app.get('/api/meetings', (req, res) => {
+  const meetings = (sharedState.meetings || []).slice().reverse();
+  res.json({ meetings });
+});
+
+// GET /api/meetings/active — current active session
+app.get('/api/meetings/active', (req, res) => {
+  res.json({ session: activeSession });
+});
+
+// GET /api/meetings/:id — single meeting (includes full transcript)
+app.get('/api/meetings/:id', (req, res) => {
+  const m = (sharedState.meetings || []).find(m => m.id === req.params.id);
+  if (!m) return res.status(404).json({ error: 'Meeting not found' });
+  res.json({ meeting: m });
+});
+
+// POST /api/meetings — create a new meeting record
+app.post('/api/meetings', (req, res) => {
+  const { title, hostName, roomId } = req.body;
+  if (!title || !roomId) return res.status(400).json({ error: 'title and roomId required' });
+
+  const meeting = {
+    id:           'meet_' + Date.now().toString(36),
+    title:        title.trim(),
+    hostName:     hostName || 'Unknown',
+    roomId,
+    startedAt:    new Date().toISOString(),
+    endedAt:      null,
+    duration:     null,
+    participants: [hostName || 'Unknown'],
+    transcriptLines: 0,
+    transcript:   [],
+    summary:      null,
+    linkedNodeId: null,
+    status:       'live',
+  };
+
+  if (!sharedState.meetings) sharedState.meetings = [];
+  sharedState.meetings.push(meeting);
+  saveToDisk();
+  console.log(`[Meet] Created meeting: "${title}" (${meeting.id})`);
+  res.json({ meeting });
+});
+
+// PATCH /api/meetings/:id — update (add summary, transcript, mark ended, add participant)
+app.patch('/api/meetings/:id', (req, res) => {
+  if (!sharedState.meetings) sharedState.meetings = [];
+  const idx = sharedState.meetings.findIndex(m => m.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Meeting not found' });
+
+  const updates = req.body;
+
+  // Merge participants (deduplicate)
+  if (updates.participant) {
+    const p = sharedState.meetings[idx].participants;
+    if (!p.includes(updates.participant)) p.push(updates.participant);
+    delete updates.participant;
+  }
+
+  // Append transcript lines (don't overwrite)
+  if (updates.transcriptLines && Array.isArray(updates.transcriptLines)) {
+    sharedState.meetings[idx].transcript.push(...updates.transcriptLines);
+    sharedState.meetings[idx].transcriptLines = sharedState.meetings[idx].transcript.length;
+    delete updates.transcriptLines;
+  }
+
+  Object.assign(sharedState.meetings[idx], updates);
+
+  // Auto-compute duration if ending
+  if (updates.status === 'completed' && sharedState.meetings[idx].startedAt) {
+    const ms = Date.now() - new Date(sharedState.meetings[idx].startedAt).getTime();
+    const mins = Math.round(ms / 60000);
+    sharedState.meetings[idx].duration = mins < 60 ? `${mins} min` : `${Math.floor(mins/60)}h ${mins%60}m`;
+  }
+
+  saveToDisk();
+  console.log(`[Meet] Updated meeting ${req.params.id}`);
+  res.json({ meeting: sharedState.meetings[idx] });
 });
 
 // GET /api/users — list all users (public, no auth needed — names/avatars only)
@@ -1004,6 +1089,30 @@ io.on('connection', (socket) => {
     saveToDisk();
     socket.broadcast.emit('team_updated', team);
   });
+
+  // ── Meeting transcript lines (relay to all in room) ───────────────────
+  socket.on('meet:transcript_line', (data) => {
+    socket.broadcast.emit('meet:transcript_line', data);
+  });
+
+  socket.on('meet:chat', (data) => {
+    socket.broadcast.emit('meet:chat', data);
+  });
+
+  // ── Active session broadcast ─────────────────────────────────────────
+  socket.on('meet:start_session', (data) => {
+    activeSession = { ...data, startedAt: new Date().toISOString() };
+    io.emit('meet:session_broadcast', activeSession); // tell EVERYONE
+    console.log(`[Meet] Session started: "${data.title}" by ${data.hostName}`);
+  });
+
+  socket.on('meet:end_session', () => {
+    activeSession = null;
+    io.emit('meet:session_ended', {});
+  });
+
+  // On connection, tell the new socket about any active session
+  if (activeSession) socket.emit('meet:session_broadcast', activeSession);
 
   socket.on('disconnect', () => {
     const user = activeUsers.get(socket.id);
