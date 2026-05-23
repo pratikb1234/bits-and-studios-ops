@@ -240,79 +240,81 @@ class AuthManager {
       <div class="login-logo">
         <div class="login-logo-icon">🔐</div>
         <div class="login-logo-text">Admin Access</div>
-        <div class="login-logo-sub">Enter your PIN to continue as <strong>${userName}</strong></div>
+        <div class="login-logo-sub">Enter your password to continue as <strong>${userName}</strong></div>
       </div>
 
       <div class="login-pin-wrap">
-        <div class="pin-dots" id="lp-dots">
-          <div class="pin-dot"></div>
-          <div class="pin-dot"></div>
-          <div class="pin-dot"></div>
-          <div class="pin-dot"></div>
+        <div class="login-pin-field-wrap">
+          <input
+            id="lp-text-input"
+            type="password"
+            class="login-pin-text-input"
+            placeholder="Enter your admin password"
+            autocomplete="current-password"
+            autofocus
+          />
+          <button class="login-pin-submit-btn" onclick="window.Auth._submitLoginPin('${userId}')">
+            Unlock →
+          </button>
         </div>
-        <div class="pin-keypad">
-          ${[1,2,3,4,5,6,7,8,9,'',0,'⌫'].map(k => `
-            <button class="pin-key ${k===''?'pin-key-empty':''}"
-              onclick="window.Auth._loginPinKey('${k}','${userId}')">${k}</button>
-          `).join('')}
-        </div>
-        <div class="pin-error hidden" id="lp-error">❌ Incorrect PIN — try again</div>
+        <div class="pin-error hidden" id="lp-error">❌ Incorrect password — try again</div>
         <button class="login-back-btn" onclick="window.Auth._renderLoginScreen()">← Back</button>
       </div>
     `;
 
-    this._lpValue  = '';
     this._lpUserId = userId;
-  }
 
-  async _loginPinKey(key, userId) {
-    if (key === '⌫') {
-      this._lpValue = this._lpValue.slice(0, -1);
-    } else if (key !== '' && this._lpValue.length < 6) {
-      this._lpValue += String(key);
-    }
-
-    const dots = document.querySelectorAll('#lp-dots .pin-dot');
-    dots.forEach((d, i) => d.classList.toggle('filled', i < this._lpValue.length));
-
-    if (this._lpValue.length === 4) {
-      setTimeout(() => this._submitLoginPin(userId), 150);
-    }
+    // Allow Enter key to submit
+    setTimeout(() => {
+      const input = document.getElementById('lp-text-input');
+      if (input) {
+        input.focus();
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') this._submitLoginPin(userId);
+        });
+      }
+    }, 50);
   }
 
   async _submitLoginPin(userId) {
-    // ✅ CORRECT ORDER: verify PIN *first*, create session *only if correct*
-    // Old bug: login() fired auth:login event before PIN was checked
+    // Read from the text password input
+    const input = document.getElementById('lp-text-input');
+    const pin   = input ? input.value.trim() : '';
+
+    if (!pin) {
+      input?.focus();
+      return;
+    }
+
+    // Disable button while verifying
+    const btn = document.querySelector('.login-pin-submit-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+
     try {
-      // Step 1: verify PIN without a session (userId + pin in body is enough)
       const r = await fetch('/api/auth/verify-pin', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ userId, pin: this._lpValue }),
+        body:    JSON.stringify({ userId, pin }),
       });
       const data = await r.json();
 
       if (r.ok && data.ok) {
-        // PIN correct — NOW create the session
+        // ✅ Password correct — NOW create session
         await this.login(userId);
         this.hideLoginScreen();
-        // Signal app to start (safety timer may be waiting)
         window._adminPinVerified = true;
         window.dispatchEvent(new Event('admin:pin:ok'));
         window.app?.showToast(`Welcome, ${this.currentUser.name}! 🔐`, 'success');
       } else {
-        // Wrong PIN — no session created, stay on PIN screen
-        this._lpValue = '';
-        document.querySelectorAll('#lp-dots .pin-dot').forEach(d => d.classList.remove('filled'));
+        // ❌ Wrong password — clear input, shake, show error
+        if (input) { input.value = ''; input.focus(); input.classList.add('shake'); setTimeout(() => input.classList.remove('shake'), 500); }
+        if (btn) { btn.disabled = false; btn.textContent = 'Unlock →'; }
         const err = document.getElementById('lp-error');
-        if (err) {
-          err.classList.remove('hidden');
-          setTimeout(() => err.classList.add('hidden'), 2500);
-        }
+        if (err) { err.classList.remove('hidden'); setTimeout(() => err.classList.add('hidden'), 2500); }
       }
     } catch (e) {
-      this._lpValue = '';
-      window.app?.showToast('Error verifying PIN: ' + e.message, 'error');
+      if (btn) { btn.disabled = false; btn.textContent = 'Unlock →'; }
+      window.app?.showToast('Error: ' + e.message, 'error');
     }
   }
 
