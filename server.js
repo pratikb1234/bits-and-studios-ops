@@ -827,7 +827,7 @@ app.get('/api/health', (req, res) => {
 
 // POST /api/agent/run — Start an agent job on a task
 app.post('/api/agent/run', async (req, res) => {
-  const { taskId, agentPersona, apiKey } = req.body || {};
+  const { taskId, agentPersona, apiKey, nodeData } = req.body || {};
   const key = apiKey || cachedGeminiKey;
 
   if (!taskId)       return res.status(400).json({ error: 'taskId required' });
@@ -837,27 +837,46 @@ app.post('/api/agent/run', async (req, res) => {
 
   // Find task in server state
   const allNodes = sharedState.nodes || [];
-  const taskData = allNodes.find(n => n.id === taskId);
-  if (!taskData) return res.status(404).json({ error: `Task ${taskId} not found on server` });
+  let taskData = allNodes.find(n => n.id === taskId);
+
+  // Fallback: if not found on server, use the node data sent by the client
+  // This happens when the server restarted or the node was created after last sync
+  if (!taskData && nodeData && nodeData.id === taskId) {
+    console.log(`[Agent] Node ${taskId} not in server state — using client-provided nodeData, upserting...`);
+    taskData = nodeData;
+    // Upsert into sharedState so it's available for future requests
+    if (!sharedState.nodes) sharedState.nodes = [];
+    const existingIdx = sharedState.nodes.findIndex(n => n.id === taskId);
+    if (existingIdx === -1) {
+      sharedState.nodes.push(nodeData);
+    } else {
+      sharedState.nodes[existingIdx] = { ...sharedState.nodes[existingIdx], ...nodeData };
+    }
+    saveToDisk();
+    io.emit('node_updated', taskData);
+  }
+
+  if (!taskData) return res.status(404).json({ error: `Task "${taskId}" not found. Try refreshing the page.` });
 
   // Create job
-  const job = agentQueue.create({ taskId, taskData, allNodes, agentPersona, apiKey: key, io });
+  const updatedNodes = sharedState.nodes || [];
+  const job = agentQueue.create({ taskId, taskData, allNodes: updatedNodes, agentPersona, apiKey: key, io });
 
   // Start async (non-blocking)
   job.run().catch(err => console.error('[Agent] Unhandled job error:', err));
 
   // Save agent info to node
-  const nodeIdx = allNodes.findIndex(n => n.id === taskId);
+  const nodeIdx = updatedNodes.findIndex(n => n.id === taskId);
   if (nodeIdx !== -1) {
-    allNodes[nodeIdx].agent = {
-      ...(allNodes[nodeIdx].agent || {}),
+    updatedNodes[nodeIdx].agent = {
+      ...(updatedNodes[nodeIdx].agent || {}),
       persona:   agentPersona,
       status:    'running',
       lastJobId: job.jobId,
       lastRun:   job.createdAt,
     };
     saveToDisk();
-    io.emit('node_updated', allNodes[nodeIdx]);
+    io.emit('node_updated', updatedNodes[nodeIdx]);
   }
 
   console.log(`[Agent] Started job ${job.jobId} | task:${taskData.label} | persona:${agentPersona}`);

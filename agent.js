@@ -182,11 +182,15 @@ class AgentPanel {
       return null;
     }
 
+    // Include the full node object so server can use it as fallback
+    // if the node isn't in server state (e.g. after a server restart)
+    const nodeData = this.data.getNode(taskId) || null;
+
     try {
       const res = await fetch('/api/agent/run', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ taskId, agentPersona, apiKey }),
+        body:    JSON.stringify({ taskId, agentPersona, apiKey, nodeData }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
