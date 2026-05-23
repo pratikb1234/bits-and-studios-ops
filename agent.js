@@ -575,6 +575,7 @@ class AgentPanel {
           agentPersona: persona,
           messages:     this.chatMessages[taskId],
           apiKey,
+          nodeData: this.data.getNode(taskId) || null,
         }),
       });
       const data = await res.json();

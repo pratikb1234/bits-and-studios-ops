@@ -149,7 +149,7 @@ const AGENT_TOOL_DECLARATIONS = [
 
 // ── AgentJob — a single agent execution run ───────────────────────────────────
 class AgentJob {
-  constructor({ jobId, taskId, taskData, allNodes, agentPersona, apiKey, io, initiatedBy }) {
+  constructor({ jobId, taskId, taskData, allNodes, agentPersona, apiKey, io, sharedState, saveToDisk, initiatedBy }) {
     this.jobId        = jobId;
     this.taskId       = taskId;
     this.taskData     = JSON.parse(JSON.stringify(taskData)); // deep copy
@@ -158,6 +158,9 @@ class AgentJob {
     this.apiKey       = apiKey;
     this.io           = io;
     this.initiatedBy  = initiatedBy || 'user';
+    // Server-side state handles (undefined in test envs — tools guard with ?.) 
+    this._sharedState = sharedState || null;
+    this._saveToDisk  = saveToDisk  || null;
 
     this.status       = 'pending';
     this.activity     = [];
@@ -327,7 +330,7 @@ class AgentJob {
     };
 
     // Try primary model, fall back to flash
-    const modelsToTry = ['gemini-3.1-pro-preview', 'gemini-flash-latest'];
+    const modelsToTry = ['gemini-2.5-pro-preview-05-06', 'gemini-2.0-flash'];
 
     for (const model of modelsToTry) {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${this.apiKey}`;
@@ -342,9 +345,9 @@ class AgentJob {
 
       if (!response.ok) {
         const msg = data?.error?.message || `HTTP ${response.status}`;
-        const isUnavailable = msg.includes('not found') || msg.includes('not supported');
-        if (isUnavailable && model !== 'gemini-flash-latest') {
-          this.log('thought', `Model ${model} unavailable, switching to gemini-flash-latest`);
+        const isUnavailable = msg.includes('not found') || msg.includes('not supported') || msg.includes('INVALID_ARGUMENT') || msg.includes('404');
+        if (isUnavailable && model !== 'gemini-2.0-flash') {
+          this.log('thought', `Model ${model} unavailable, switching to gemini-2.0-flash`);
           continue;
         }
         throw new Error(msg);
@@ -442,6 +445,15 @@ class AgentJob {
     this.taskData.subtasks = [...(this.taskData.subtasks || []), subtask];
     this.taskData.updatedAt = new Date().toISOString();
 
+    // Persist to sharedState so change survives page reload
+    if (this._sharedState?.nodes) {
+      const idx = this._sharedState.nodes.findIndex(n => n.id === this.taskId);
+      if (idx !== -1) {
+        this._sharedState.nodes[idx] = { ...this._sharedState.nodes[idx], ...this.taskData };
+        this._saveToDisk?.();
+      }
+    }
+
     this.io?.emit('node_updated', { ...this.taskData });
 
     this.broadcast('tool_result', {
@@ -460,6 +472,16 @@ class AgentJob {
     }
 
     Object.assign(this.taskData, updates, { updatedAt: new Date().toISOString() });
+
+    // Persist to sharedState
+    if (this._sharedState?.nodes) {
+      const idx = this._sharedState.nodes.findIndex(n => n.id === this.taskId);
+      if (idx !== -1) {
+        Object.assign(this._sharedState.nodes[idx], updates, { updatedAt: this.taskData.updatedAt });
+        this._saveToDisk?.();
+      }
+    }
+
     this.io?.emit('node_updated', { ...this.taskData });
 
     this.broadcast('tool_result', {
@@ -489,6 +511,13 @@ class AgentJob {
       updatedAt:   new Date().toISOString(),
       agentCreated: true,
     };
+
+    // Persist to sharedState so it survives page refresh
+    if (this._sharedState) {
+      if (!this._sharedState.nodes) this._sharedState.nodes = [];
+      this._sharedState.nodes.push(newNode);
+      this._saveToDisk?.();
+    }
 
     this.io?.emit('node_added', newNode);
 
@@ -702,7 +731,7 @@ ${taskSummary || 'No tasks in this department.'}
 Be direct. Be specific. Use actual task names. This is a real operations briefing.`;
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${this.apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.apiKey}`,
       {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },

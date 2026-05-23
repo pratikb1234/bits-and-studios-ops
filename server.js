@@ -858,12 +858,23 @@ app.post('/api/agent/run', async (req, res) => {
 
   if (!taskData) return res.status(404).json({ error: `Task "${taskId}" not found. Try refreshing the page.` });
 
-  // Create job
+  // Create job — pass sharedState + saveToDisk so agent tools can persist mutations
   const updatedNodes = sharedState.nodes || [];
-  const job = agentQueue.create({ taskId, taskData, allNodes: updatedNodes, agentPersona, apiKey: key, io });
+  const job = agentQueue.create({ taskId, taskData, allNodes: updatedNodes, agentPersona, apiKey: key, io, sharedState, saveToDisk });
 
-  // Start async (non-blocking)
-  job.run().catch(err => console.error('[Agent] Unhandled job error:', err));
+  // Mark agent status done when job completes (emit node_updated)
+  job.run()
+    .then(() => {
+      const n2 = sharedState.nodes?.find(n => n.id === taskId);
+      if (n2?.agent) {
+        n2.agent.status    = job.status === 'error' ? 'error' : 'done';
+        n2.agent.summary   = job.summary || n2.agent.summary;
+        n2.agent.lastJobId = job.jobId;
+        saveToDisk();
+        io.emit('node_updated', n2);
+      }
+    })
+    .catch(err => console.error('[Agent] Unhandled job error:', err));
 
   // Save agent info to node
   const nodeIdx = updatedNodes.findIndex(n => n.id === taskId);
@@ -926,8 +937,19 @@ app.post('/api/agent/chat', async (req, res) => {
   if (!taskId) return res.status(400).json({ error: 'taskId required' });
 
   const allNodes = sharedState.nodes || [];
-  const taskData = allNodes.find(n => n.id === taskId);
-  if (!taskData) return res.status(404).json({ error: 'Task not found' });
+  let taskData = allNodes.find(n => n.id === taskId);
+
+  // Same fallback as /api/agent/run — use client-provided node if server doesn't have it
+  if (!taskData && req.body.nodeData?.id === taskId) {
+    taskData = req.body.nodeData;
+    if (!sharedState.nodes) sharedState.nodes = [];
+    const existingIdx = sharedState.nodes.findIndex(n => n.id === taskId);
+    if (existingIdx === -1) sharedState.nodes.push(taskData);
+    else sharedState.nodes[existingIdx] = { ...sharedState.nodes[existingIdx], ...taskData };
+    saveToDisk();
+  }
+
+  if (!taskData) return res.status(404).json({ error: 'Task not found. Try refreshing the page.' });
 
   const persona = AGENT_PERSONAS[agentPersona] || AGENT_PERSONAS.gemini;
 
@@ -970,7 +992,7 @@ Answer as the task expert. Be specific, concise, and helpful. Reference actual t
     }
 
     const gRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${key}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
       {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1017,7 +1039,7 @@ app.get('/api/supervisor/brief/:dept', async (req, res) => {
   const allNodes     = sharedState.nodes || [];
 
   try {
-    const supervisor = new SupervisorAgent({ department: dept, agentPersona, allNodes, apiKey, io });
+    const supervisor = new SupervisorAgent({ department: dept, agentPersona, allNodes, apiKey, io, sharedState, saveToDisk });
     const brief      = await supervisor.runBrief();
     res.json(brief);
   } catch (err) {
@@ -1038,8 +1060,18 @@ app.post('/api/supervisor/run-all', async (req, res) => {
 
   const jobs = [];
   for (const task of deptTasks) {
-    const job = agentQueue.create({ taskId: task.id, taskData: task, allNodes, agentPersona, apiKey: key, io });
-    job.run().catch(err => console.error('[Agent] Batch job error:', err));
+    const job = agentQueue.create({ taskId: task.id, taskData: task, allNodes, agentPersona, apiKey: key, io, sharedState, saveToDisk });
+    job.run()
+      .then(() => {
+        const n2 = sharedState.nodes?.find(n => n.id === task.id);
+        if (n2?.agent) {
+          n2.agent.status = job.status === 'error' ? 'error' : 'done';
+          n2.agent.summary = job.summary || n2.agent.summary;
+          saveToDisk();
+          io.emit('node_updated', n2);
+        }
+      })
+      .catch(err => console.error('[Agent] Batch job error:', err));
     jobs.push({ jobId: job.jobId, taskId: task.id, taskLabel: task.label });
 
     // Small delay between agent starts to avoid rate limits
