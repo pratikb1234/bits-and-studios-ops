@@ -172,7 +172,7 @@ class AgentPanel {
   // ── REST API helpers ───────────────────────────────────────────────────────
   _getApiKey() {
     const s = this.data.getSettings();
-    return s.geminiApiKey || s.anthropicApiKey || '';
+    return window._orgApiKey || s.geminiApiKey || s.anthropicApiKey || '';
   }
 
   async runAgent(taskId, agentPersona) {

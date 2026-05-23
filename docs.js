@@ -397,12 +397,11 @@ class DocsPanel {
     if (!section) return;
 
     const settings = this.data.getSettings();
-    const apiKey = settings.geminiApiKey || settings.anthropicApiKey;
+    const apiKey = window._orgApiKey || settings.geminiApiKey || settings.anthropicApiKey || '';
     if (!apiKey) {
-      window.app?.showToast('Please add your Gemini API key in ⚙️ Settings', 'error');
+      window.app?.showToast('⚙️ No Gemini API key found — contact admin', 'error');
       return;
     }
-
     this.gemini.setApiKey(apiKey);
     this.gemini.model = 'gemini-3.1-pro-preview'; // deep work — falls back to flash if unavailable
 

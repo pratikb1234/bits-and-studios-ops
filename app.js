@@ -24,18 +24,30 @@ class App {
 
     if (this.history) this.history.hookDataLayer();
 
-    // Sync API key: prefer server-cached key (set by admin), fallback to user's own
+    // Step 1 — use any locally saved key immediately (fast)
     try {
-      const settings = this.data.getSettings();
-      // Try to get per-user API key first, then fall back to shared settings
-      const userApiKey = window.Auth?.getItem('bits_gemini_key') || '';
-      const savedKey   = userApiKey || settings.geminiApiKey || settings.anthropicApiKey || '';
-      if (savedKey) {
-        if (this.docs)    this.docs.gemini.setApiKey(savedKey);
-        if (this.meeting) this.meeting.api.setApiKey(savedKey);
-        if (this.chat)    this.chat.api.setApiKey(savedKey);
+      const settings  = this.data.getSettings();
+      const localKey  = window.Auth?.getItem('bits_gemini_key') || settings.geminiApiKey || settings.anthropicApiKey || '';
+      if (localKey) {
+        window._orgApiKey = localKey;
+        if (this.docs)    this.docs.gemini.setApiKey(localKey);
+        if (this.meeting) this.meeting.api.setApiKey(localKey);
+        if (this.chat)    this.chat.api.setApiKey(localKey);
       }
-    } catch(e) { console.warn('[App] Key sync error:', e.message); }
+    } catch(e) { console.warn('[App] Local key error:', e.message); }
+
+    // Step 2 — always fetch from server env var (GEMINI_API_KEY overrides everything)
+    fetch('/api/check-key')
+      .then(r => r.json())
+      .then(({ key }) => {
+        if (!key) return;
+        window._orgApiKey = key;
+        if (this.docs)    this.docs.gemini.setApiKey(key);
+        if (this.meeting) this.meeting.api.setApiKey(key);
+        if (this.chat)    this.chat.api.setApiKey(key);
+        console.log('[App] ✅ Org API key loaded from server env');
+      })
+      .catch(e => console.warn('[App] Could not fetch org key:', e.message));
 
     this.bindEvents();
     this.updateStats();

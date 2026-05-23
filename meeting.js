@@ -32,9 +32,9 @@ class MeetingProcessor {
     if (!transcript.trim()) return;
 
     const settings = this.data.getSettings();
-    const apiKey = settings.geminiApiKey || settings.anthropicApiKey || '';
+    const apiKey = window._orgApiKey || settings.geminiApiKey || settings.anthropicApiKey || '';
     if (!apiKey) {
-      this._showError('Please set your Gemini API key in ⚙️ Settings first.');
+      this._showError('No Gemini API key configured. Contact admin.');
       return;
     }
 

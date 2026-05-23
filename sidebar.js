@@ -445,7 +445,7 @@ class Sidebar {
     if (!node) return;
 
     const settings = this.data.getSettings();
-    if (!settings.geminiApiKey && !settings.anthropicApiKey) {
+    if (!window._orgApiKey && !settings.geminiApiKey && !settings.anthropicApiKey) {
       window.app?.showToast('Add your Gemini API key in ⚙️ Settings first', 'error');
       return;
     }
