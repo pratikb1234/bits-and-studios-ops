@@ -323,8 +323,60 @@ class MindMap {
     });
 
     this.updateSelection();
+    this._updateMapOverlay();
     // Reapply view mode filters after every render
     setTimeout(() => window.ViewMode?.refresh(), 50);
+  }
+
+  // ── Live Map Overlay ────────────────────────────────────────────────────────
+  // Floating mini-dashboard on the canvas — updates every render
+  _updateMapOverlay() {
+    const allNodes  = this.data.getAllNodes().filter(n => n.id !== 'root');
+    if (!allNodes.length) return;
+
+    const total     = allNodes.length;
+    const done      = allNodes.filter(n => n.status === 'done' || n.status === 'cancelled').length;
+    const blocked   = allNodes.filter(n => n.status === 'blocked').length;
+    const support   = allNodes.filter(n => n.status === 'need_support').length;
+    const inReview  = allNodes.filter(n => n.status === 'in_review').length;
+    const pct       = Math.round((done / total) * 100);
+    const today     = new Date().toISOString().slice(0, 10);
+    const overdue   = allNodes.filter(n =>
+      n.dueDate && n.dueDate < today &&
+      n.status !== 'done' && n.status !== 'cancelled'
+    ).length;
+
+    // Create or find overlay element
+    const containerId = 'mm-live-overlay';
+    let overlay = document.getElementById(containerId);
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = containerId;
+      overlay.className = 'mm-live-overlay';
+      // Insert into the mindmap wrapper
+      const wrapper = document.getElementById('mindmap-container') ||
+                      this.svg?.node()?.closest('.mindmap-wrapper, #main-content, main');
+      if (wrapper) wrapper.appendChild(overlay);
+      else document.body.appendChild(overlay);
+    }
+
+    // Build status chips (only show non-zero)
+    const chips = [];
+    if (overdue)  chips.push(`<span class="mlo-chip overdue">⚠️ ${overdue} overdue</span>`);
+    if (blocked)  chips.push(`<span class="mlo-chip blocked">🚫 ${blocked} blocked</span>`);
+    if (support)  chips.push(`<span class="mlo-chip support">🆘 ${support} need help</span>`);
+    if (inReview) chips.push(`<span class="mlo-chip review">👀 ${inReview} in review</span>`);
+
+    overlay.innerHTML = `
+      <div class="mlo-progress-row">
+        <div class="mlo-bar-wrap">
+          <div class="mlo-bar-fill" style="width:${pct}%"></div>
+        </div>
+        <span class="mlo-pct">${pct}%</span>
+      </div>
+      <div class="mlo-counts">${done}/${total} tasks done</div>
+      ${chips.length ? `<div class="mlo-chips">${chips.join('')}</div>` : ''}
+    `;
   }
 
   selectNode(id) {
