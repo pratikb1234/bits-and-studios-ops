@@ -213,12 +213,95 @@ class AuthManager {
     document.querySelectorAll('.login-user-card').forEach(c => c.classList.remove('selected'));
     document.querySelector(`[data-userid="${userId}"]`)?.classList.add('selected');
 
+    // Check if this user is an admin — require PIN before granting access
+    const user = this.users.find(u => u.id === userId);
+    if (user?.role === 'admin') {
+      this._showLoginPinPrompt(userId, user.name);
+      return;
+    }
+
+    // Employee: log in directly
     try {
       await this.login(userId);
       this.hideLoginScreen();
       window.app?.showToast(`Welcome back, ${this.currentUser.name}! 👋`, 'success');
     } catch (err) {
+      document.querySelectorAll('.login-user-card').forEach(c => c.classList.remove('selected'));
       window.app?.showToast('Login error: ' + err.message, 'error');
+    }
+  }
+
+  // ── PIN prompt shown directly on the login screen for admins ──────────────
+  _showLoginPinPrompt(userId, userName) {
+    const body = document.getElementById('login-body');
+    if (!body) return;
+
+    body.innerHTML = `
+      <div class="login-logo">
+        <div class="login-logo-icon">🔐</div>
+        <div class="login-logo-text">Admin Access</div>
+        <div class="login-logo-sub">Enter your PIN to continue as <strong>${userName}</strong></div>
+      </div>
+
+      <div class="login-pin-wrap">
+        <div class="pin-dots" id="lp-dots">
+          <div class="pin-dot"></div>
+          <div class="pin-dot"></div>
+          <div class="pin-dot"></div>
+          <div class="pin-dot"></div>
+        </div>
+        <div class="pin-keypad">
+          ${[1,2,3,4,5,6,7,8,9,'',0,'⌫'].map(k => `
+            <button class="pin-key ${k===''?'pin-key-empty':''}"
+              onclick="window.Auth._loginPinKey('${k}','${userId}')">${k}</button>
+          `).join('')}
+        </div>
+        <div class="pin-error hidden" id="lp-error">❌ Incorrect PIN — try again</div>
+        <button class="login-back-btn" onclick="window.Auth._renderLoginScreen()">← Back</button>
+      </div>
+    `;
+
+    this._lpValue  = '';
+    this._lpUserId = userId;
+  }
+
+  async _loginPinKey(key, userId) {
+    if (key === '⌫') {
+      this._lpValue = this._lpValue.slice(0, -1);
+    } else if (key !== '' && this._lpValue.length < 6) {
+      this._lpValue += String(key);
+    }
+
+    const dots = document.querySelectorAll('#lp-dots .pin-dot');
+    dots.forEach((d, i) => d.classList.toggle('filled', i < this._lpValue.length));
+
+    if (this._lpValue.length === 4) {
+      setTimeout(() => this._submitLoginPin(userId), 150);
+    }
+  }
+
+  async _submitLoginPin(userId) {
+    // Temporarily log in to get a token, then verify PIN
+    try {
+      await this.login(userId);
+      const ok = await this.verifyPin(this._lpValue);
+      if (ok) {
+        this.hideLoginScreen();
+        window.app?.showToast(`Welcome, ${this.currentUser.name}! 🔐`, 'success');
+      } else {
+        // Reject — clear session, stay on pin screen
+        clearSession();
+        this.session = null;
+        this._lpValue = '';
+        document.querySelectorAll('#lp-dots .pin-dot').forEach(d => d.classList.remove('filled'));
+        const err = document.getElementById('lp-error');
+        if (err) {
+          err.classList.remove('hidden');
+          setTimeout(() => err.classList.add('hidden'), 2500);
+        }
+      }
+    } catch (e) {
+      window.app?.showToast('Error: ' + e.message, 'error');
     }
   }
 

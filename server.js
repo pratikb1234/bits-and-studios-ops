@@ -9,6 +9,7 @@ const fs       = require('fs');
 const crypto   = require('crypto');
 const { AgentJobQueue, SupervisorAgent, AGENT_PERSONAS } = require('./agent-runtime');
 const { UserStore } = require('./users');
+const { connectMongo, loadFromMongo, saveToMongo, isReady: mongoReady } = require('./database');
 
 const app    = express();
 const server = http.createServer(app);
@@ -32,7 +33,7 @@ const io = new Server(server, {
 });
 
 const PORT      = process.env.PORT || 3000;
-const DATA_FILE = path.join(__dirname, 'collab-data.json');
+const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'collab-data.json');
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
 
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -57,7 +58,49 @@ function saveToDisk() {
   catch (e) { console.error('[Server] Failed to save data file:', e.message); }
 }
 
-loadFromDisk();
+// Debounced save — used for rapid collab edits (1.5s delay before write)
+
+async function saveData() {
+  saveToDisk();
+  if (require('./database').isReady) {
+    await saveToMongo(sharedState).catch(e =>
+      console.error('[MongoDB] Save failed (data still on disk):', e.message));
+  }
+}
+
+// Debounced version used by collab-sync (prevents hammering DB on rapid edits)
+function saveToDiskDebounced() {
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(() => saveData(), 1500);
+}
+
+// ── Boot: try MongoDB first, fall back to file ──────────────────────────────
+async function boot() {
+  const mongoOk = await connectMongo();
+
+  if (mongoOk) {
+    const mongoData = await loadFromMongo();
+    if (mongoData && mongoData.nodes) {
+      sharedState = mongoData;
+      console.log(`[Server] ✅ Loaded ${sharedState.nodes?.length ?? 0} nodes from MongoDB Atlas`);
+      // Also write to local disk as backup
+      saveToDisk();
+    } else {
+      // MongoDB connected but empty — seed from local file if it exists
+      loadFromDisk();
+      if (sharedState.nodes?.length) {
+        console.log('[Server] Seeding MongoDB from local file...');
+        await saveToMongo(sharedState);
+      }
+    }
+  } else {
+    // No MongoDB — use local file only
+    loadFromDisk();
+  }
+}
+
+// Run boot (async) — server will start after this resolves
+
 
 // ── User store (init after disk load so users are in sharedState) ───────────────
 const userStore = new UserStore(sharedState, saveToDisk);
@@ -851,9 +894,24 @@ io.on('connection', (socket) => {
   });
 });
 
-// ── Start ─────────────────────────────────────────────────────────────────────
-server.listen(PORT, () => {
-  console.log(`\n🚀 Bits & Studios Collaboration Server`);
-  console.log(`   Running at: http://localhost:${PORT}`);
-  console.log(`   Share this URL with teammates to collaborate!\n`);
+// ── Start (async boot so MongoDB loads before requests) ──────────────────────
+boot().then(() => {
+  // Re-init UserStore after boot (sharedState may have been updated from MongoDB)
+  userStore._sync?.();
+
+  server.listen(PORT, () => {
+    console.log(`
+🚀 Bits & Studios Collaboration Server`);
+    console.log(`   Running at: http://localhost:${PORT}`);
+    if (require('./database').isReady) {
+      console.log(`   💾 Data: MongoDB Atlas (persistent across deploys)`);
+    } else {
+      console.log(`   💾 Data: Local file (set MONGODB_URI on Render for persistence)`);
+    }
+    console.log(`   Share this URL with teammates to collaborate!
+`);
+  });
+}).catch(err => {
+  console.error('Boot error:', err);
+  process.exit(1);
 });
