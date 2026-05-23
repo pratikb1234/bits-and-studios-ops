@@ -1,526 +1,556 @@
-// ── Bits & Studios — Live Meeting Room ─────────────────────────────────────
-// WebRTC (PeerJS) + Web Speech API transcription + Gemini summary
-// Each participant transcribes their own mic — tagged with their portal identity
-// Socket.io aggregates all transcript lines to all participants in real time
-
+// ── Bits & Studios — Live Meeting Room v2 ──────────────────────────────────
+// Jitsi Meet (free, open-source, full Zoom/Meet feature parity) +
+// Web Speech API per-user transcription (diarized by portal identity) +
+// Socket.io team notifications + Gemini end-of-meeting AI summary
 'use strict';
+
+const JITSI_DOMAIN = 'meet.jit.si';
 
 class MeetingRoom {
   constructor(dataLayer) {
-    this.data       = dataLayer;
-    this.isOpen     = false;
-    this.isStarted  = false;
-    this.roomId     = null;       // meeting node id or custom room
-    this.peers      = new Map();  // peerId → { conn, stream, videoEl }
-    this.localStream= null;
-    this.micActive  = true;
-    this.camActive  = true;
-    this.transcript = [];         // [{speaker, text, ts}]
-    this.recognition= null;       // Web Speech API
-    this.peer       = null;       // PeerJS instance
+    this.data        = dataLayer;
+    this.isOpen      = false;
+    this.isStarted   = false;
+    this.roomId      = null;
+    this.nodeId      = null;
+    this.jitsi       = null;        // JitsiMeetExternalAPI instance
+    this.transcript  = [];          // [{speaker, text, color, ts}]
+    this.recognition = null;        // Web Speech API
+    this.micMuted    = false;       // mirrors Jitsi mute state
+    this.participants= new Map();   // peerId → {name, color}
 
+    // Cache DOM refs
     this._el = {
-      modal:      document.getElementById('meet-room-modal'),
-      videoGrid:  document.getElementById('meet-video-grid'),
+      overlay:    document.getElementById('meet-room-modal'),
+      roomName:   document.getElementById('meet-room-name'),
+      roomMeta:   document.getElementById('meet-room-meta'),
+      status:     document.getElementById('meet-status-badge'),
+      jitsiWrap:  document.getElementById('jitsi-container'),
+      closeBtn:   document.getElementById('meet-room-close'),
+      linkBtn:    document.getElementById('meet-link-btn'),
+      endBtn:     document.getElementById('meet-end-btn'),
       txBody:     document.getElementById('meet-transcript-body'),
       txCount:    document.getElementById('meet-line-count'),
-      name:       document.getElementById('meet-room-name'),
-      meta:       document.getElementById('meet-room-meta'),
-      status:     document.getElementById('meet-status-badge'),
+      participantList: document.getElementById('meet-participants'),
       summaryPnl: document.getElementById('meet-summary-panel'),
       summaryBody:document.getElementById('meet-summary-body'),
-      startBtn:   document.getElementById('meet-btn-start'),
-      endBtn:     document.getElementById('meet-btn-end'),
-      micBtn:     document.getElementById('meet-btn-mic'),
-      camBtn:     document.getElementById('meet-btn-cam'),
-      screenBtn:  document.getElementById('meet-btn-screen'),
       saveBtn:    document.getElementById('meet-save-btn'),
-      closeBtn:   document.getElementById('meet-room-close'),
+      chatInput:  document.getElementById('meet-chat-input'),
+      chatSend:   document.getElementById('meet-chat-send'),
+      chatBody:   document.getElementById('meet-chat-body'),
     };
 
     this._bindEvents();
-  }
-
-  // ── Public ─────────────────────────────────────────────────────────────────
-  open(nodeId, nodeLabel) {
-    this.isOpen = true;
-    this.roomId = nodeId || ('room_' + Date.now());
-
-    if (this._el.name)  this._el.name.textContent  = nodeLabel || 'Live Meeting Room';
-    if (this._el.meta)  this._el.meta.textContent  = `Room: ${this.roomId} · ${this._me().name}`;
-    if (this._el.modal) this._el.modal.classList.remove('hidden');
-    this._setStatus('idle', '● Idle');
-    this._resetTranscript();
-  }
-
-  close() {
-    this.isOpen = false;
-    this._endMeeting(false); // stop streams but don't summarise
-    if (this._el.modal) this._el.modal.classList.add('hidden');
-  }
-
-  toggle(nodeId, nodeLabel) {
-    this.isOpen ? this.close() : this.open(nodeId, nodeLabel);
-  }
-
-  // ── Bindings ───────────────────────────────────────────────────────────────
-  _bindEvents() {
-    this._el.closeBtn?.addEventListener('click',  () => this.close());
-    this._el.startBtn?.addEventListener('click',  () => this._startMeeting());
-    this._el.endBtn?.addEventListener('click',    () => this._endMeeting(true));
-    this._el.micBtn?.addEventListener('click',    () => this._toggleMic());
-    this._el.camBtn?.addEventListener('click',    () => this._toggleCam());
-    this._el.screenBtn?.addEventListener('click', () => this._shareScreen());
-    this._el.saveBtn?.addEventListener('click',   () => this._saveSummaryToNode());
-
-    // Close on backdrop click
-    this._el.modal?.addEventListener('click', (e) => {
-      if (e.target === this._el.modal) this.close();
-    });
-
-    // Listen for transcript events from other participants via Socket.io
     this._bindSocket();
   }
 
-  _bindSocket() {
-    const tryBind = () => {
-      const socket = window._socket || window._agentSocket;
-      if (!socket) return;
-      socket.on('meet:transcript_line', (data) => {
-        if (data.roomId !== this.roomId) return;
-        this._appendTranscriptLine(data.speaker, data.text, data.speakerColor, false);
-      });
-      socket.on('meet:participant_joined', (data) => {
-        if (data.roomId !== this.roomId) return;
-        window.app?.showToast(`📹 ${data.name} joined the meeting`, 'info');
-        this._setMeta();
-      });
-      socket.on('meet:participant_left', (data) => {
-        if (data.roomId !== this.roomId) return;
-        window.app?.showToast(`👋 ${data.name} left the meeting`, 'info');
-      });
-    };
-    setTimeout(tryBind, 1000);
+  /* ── Public ─────────────────────────────────────────────────────────────── */
+  open(nodeId, label) {
+    this.nodeId = nodeId || null;
+    this.roomId = nodeId
+      ? 'bits-studios-' + nodeId.replace(/[^a-zA-Z0-9]/g, '-')
+      : 'bits-studios-' + Math.random().toString(36).slice(2, 9);
+
+    if (this._el.roomName) this._el.roomName.textContent = label || 'Live Meeting Room';
+    if (this._el.roomMeta) this._el.roomMeta.textContent = `Room: ${this.roomId}`;
+
+    this._resetPanels();
+    this._el.overlay?.classList.remove('hidden');
+    this.isOpen = true;
+
+    this._setStatus('lobby', '○ Lobby');
+    this._startJitsi();
   }
 
-  // ── Meeting lifecycle ──────────────────────────────────────────────────────
-  async _startMeeting() {
+  close() {
+    this._stopTranscription();
+    if (this.jitsi) { try { this.jitsi.dispose(); } catch(e) {} this.jitsi = null; }
+    if (this._el.jitsiWrap) this._el.jitsiWrap.innerHTML = '';
+    this._el.overlay?.classList.add('hidden');
+    this.isOpen    = false;
+    this.isStarted = false;
+    this._emitSocket('meet:leave', { roomId: this.roomId, name: this._me().name });
+  }
+
+  toggle(nodeId, label) {
+    this.isOpen ? this.close() : this.open(nodeId, label);
+  }
+
+  /* ── Jitsi setup ────────────────────────────────────────────────────────── */
+  async _startJitsi() {
+    // Load Jitsi External API if not present
+    if (typeof JitsiMeetExternalAPI === 'undefined') {
+      await this._loadScript(`https://${JITSI_DOMAIN}/external_api.js`);
+    }
+
+    const me = this._me();
+    if (this._el.jitsiWrap) this._el.jitsiWrap.innerHTML = '';
+
+    const options = {
+      roomName:   this.roomId,
+      parentNode: this._el.jitsiWrap,
+      width:      '100%',
+      height:     '100%',
+      configOverwrite: {
+        startWithAudioMuted:     false,
+        startWithVideoMuted:     false,
+        prejoinPageEnabled:      false,
+        disableDeepLinking:      true,
+        enableWelcomePage:       false,
+        enableClosePage:         false,
+        disableInviteFunctions:  false,
+        defaultLanguage:         'en',
+        enableNoisyMicDetection: true,
+        enableTalkWhileMuted:    true,
+        resolution:              720,
+        constraints: {
+          video: { height: { ideal: 720, max: 1080, min: 180 } }
+        },
+        // Show all toolbar buttons like a real video call app
+        toolbarButtons: [
+          'microphone', 'camera', 'desktop', 'fullscreen',
+          'fodeviceselection', 'hangup', 'profile', 'chat',
+          'recording', 'sharedvideo', 'settings', 'raisehand',
+          'videoquality', 'filmstrip', 'tileview', 'select-background',
+          'stats', 'shortcuts', 'download', 'mute-everyone',
+          'security', 'participants-pane',
+        ],
+      },
+      interfaceConfigOverwrite: {
+        SHOW_JITSI_WATERMARK:      false,
+        SHOW_WATERMARK_FOR_GUESTS: false,
+        SHOW_POWERED_BY:           false,
+        DEFAULT_REMOTE_DISPLAY_NAME: 'Team Member',
+        APP_NAME:                  'Bits & Studios Meet',
+        NATIVE_APP_NAME:           'Bits & Studios',
+        PROVIDER_NAME:             'Bits & Studios',
+        HIDE_INVITE_MORE_HEADER:   false,
+        TOOLBAR_ALWAYS_VISIBLE:    false,
+        DISABLE_JOIN_LEAVE_NOTIFICATIONS: false,
+      },
+      userInfo: {
+        displayName: me.name,
+        email:       me.email || '',
+        avatarUrl:   me.avatarUrl || '',
+      },
+    };
+
     try {
+      this.jitsi = new JitsiMeetExternalAPI(JITSI_DOMAIN, options);
+      this._bindJitsiEvents();
       this._setStatus('connecting', '⟳ Connecting…');
+    } catch (err) {
+      console.error('[MeetRoom] Jitsi init failed:', err);
+      window.app?.showToast('Could not start meeting: ' + err.message, 'error');
+    }
+  }
 
-      // Get local media
-      this.localStream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true,
-      });
+  _bindJitsiEvents() {
+    if (!this.jitsi) return;
 
-      // Show local video
-      this._addVideoTile(null, this.localStream, this._me().name + ' (You)', true);
-
-      // Init PeerJS for WebRTC
-      await this._initPeer();
-
-      // Start Web Speech transcription
-      this._startTranscription();
-
-      // Announce to room via socket
-      this._emitSocket('meet:join', {
-        roomId:  this.roomId,
-        name:    this._me().name,
-        color:   this._me().color,
-        peerId:  this.peer?.id,
-      });
-
+    // Joined the conference
+    this.jitsi.addListener('videoConferenceJoined', (data) => {
       this.isStarted = true;
       this._setStatus('live', '🔴 Live');
-      this._el.startBtn?.classList.add('hidden');
-      this._el.endBtn?.classList.remove('hidden');
-      this._resetTranscript();
+      this._startTranscription();
+      this._emitSocket('meet:join', { roomId: this.roomId, name: this._me().name, color: this._me().color });
+      this._updateParticipant('me', { name: this._me().name + ' (You)', color: this._me().color, active: true });
+      window.app?.showToast('📹 Joined meeting — transcription started', 'success');
+    });
 
-    } catch (err) {
-      console.error('[MeetRoom] Start failed:', err);
-      this._setStatus('error', '✕ Error');
-      if (err.name === 'NotAllowedError') {
-        window.app?.showToast('🎙️ Camera/mic permission denied', 'error');
-      } else {
-        window.app?.showToast('Meeting start failed: ' + err.message, 'error');
+    // Someone else joined
+    this.jitsi.addListener('participantJoined', (data) => {
+      const name = data.displayName || 'Participant';
+      this._updateParticipant(data.id, { name, color: this._colorForName(name), active: true });
+      this._addSystemLine(`${name} joined the call`);
+    });
+
+    // Someone left
+    this.jitsi.addListener('participantLeft', (data) => {
+      const p = this.participants.get(data.id);
+      if (p) this._addSystemLine(`${p.name} left the call`);
+      this.participants.delete(data.id);
+      this._renderParticipants();
+    });
+
+    // Display names updated (when remote participant sets their name)
+    this.jitsi.addListener('displayNameChange', (data) => {
+      if (data.id && data.displayname) {
+        this._updateParticipant(data.id, { name: data.displayname, color: this._colorForName(data.displayname) });
       }
-    }
-  }
+    });
 
-  async _endMeeting(summarise = true) {
-    if (!this.isStarted && !summarise) return;
+    // Mute state — pause transcription when muted
+    this.jitsi.addListener('audioMuteStatusChanged', (data) => {
+      this.micMuted = data.muted;
+      if (this.micMuted) {
+        try { this.recognition?.stop(); } catch(e) {}
+      } else if (this.isStarted) {
+        setTimeout(() => { try { this.recognition?.start(); } catch(e) {} }, 300);
+      }
+    });
 
-    // Stop transcription
-    this._stopTranscription();
+    // Chat messages from Jitsi — show in our chat panel too
+    this.jitsi.addListener('incomingMessage', (data) => {
+      this._addChatMessage(data.from || 'Participant', data.message, false);
+    });
+    this.jitsi.addListener('outgoingMessage', (data) => {
+      this._addChatMessage(this._me().name + ' (You)', data.message, true);
+    });
 
-    // Stop local stream
-    if (this.localStream) {
-      this.localStream.getTracks().forEach(t => t.stop());
-      this.localStream = null;
-    }
+    // Meeting ended (someone clicked Hangup)
+    this.jitsi.addListener('videoConferenceLeft', () => {
+      this.isStarted = false;
+      this._setStatus('ended', '✕ Ended');
+      this._stopTranscription();
+      this._emitSocket('meet:leave', { roomId: this.roomId, name: this._me().name });
+      if (this.transcript.length > 0) this._summariseMeeting();
+    });
 
-    // Destroy peer connections
-    if (this.peer) {
-      this.peer.destroy();
-      this.peer = null;
-    }
-    this.peers.clear();
+    // Screen share
+    this.jitsi.addListener('screenSharingStatusChanged', (data) => {
+      this._addSystemLine(data.on
+        ? `${this._me().name} started screen sharing`
+        : `Screen sharing stopped`);
+    });
 
-    // Clear video grid
-    if (this._el.videoGrid) this._el.videoGrid.innerHTML = '';
+    // Recording
+    this.jitsi.addListener('recordingStatusChanged', (data) => {
+      if (data.on) window.app?.showToast('🔴 Recording started', 'info');
+    });
 
-    // Announce leaving
-    this._emitSocket('meet:leave', { roomId: this.roomId, name: this._me().name });
-
-    this.isStarted = false;
-    this._setStatus('idle', '● Idle');
-    this._el.startBtn?.classList.remove('hidden');
-    this._el.endBtn?.classList.add('hidden');
-
-    if (summarise && this.transcript.length > 0) {
-      await this._summariseMeeting();
-    }
-  }
-
-  // ── WebRTC via PeerJS ─────────────────────────────────────────────────────
-  async _initPeer() {
-    // Load PeerJS from CDN if not already loaded
-    if (typeof Peer === 'undefined') {
-      await this._loadScript('https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js');
-    }
-
-    return new Promise((resolve, reject) => {
-      // Use a deterministic peer ID: roomId_userId
-      const peerId = (this.roomId + '_' + this._me().id).replace(/[^a-zA-Z0-9_-]/g, '_');
-
-      this.peer = new Peer(peerId, {
-        host: '0.peerjs.com',
-        port: 443,
-        path: '/',
-        secure: true,
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-          ]
-        }
-      });
-
-      this.peer.on('open', (id) => {
-        console.log('[MeetRoom] PeerJS ID:', id);
-        resolve(id);
-      });
-
-      this.peer.on('error', (err) => {
-        console.warn('[MeetRoom] PeerJS error:', err.type, err.message);
-        // Non-fatal — continue without WebRTC (audio-only transcription still works)
-        resolve(null);
-      });
-
-      // Answer incoming calls
-      this.peer.on('call', (call) => {
-        call.answer(this.localStream);
-        call.on('stream', (remoteStream) => {
-          const name = call.metadata?.name || 'Participant';
-          this._addVideoTile(call.peer, remoteStream, name, false);
-        });
-        call.on('close', () => this._removeVideoTile(call.peer));
-      });
-
-      // Timeout — continue even if PeerJS cloud is slow
-      setTimeout(() => resolve(null), 5000);
+    // Error
+    this.jitsi.addListener('errorOccurred', (data) => {
+      console.warn('[MeetRoom] Jitsi error:', data);
     });
   }
 
-  _addVideoTile(peerId, stream, name, isLocal) {
-    if (!this._el.videoGrid) return;
-
-    const id = 'vt_' + (peerId || 'local');
-    let tile = document.getElementById(id);
-    if (!tile) {
-      tile = document.createElement('div');
-      tile.id = id;
-      tile.className = 'meet-video-tile' + (isLocal ? ' meet-video-local' : '');
-      tile.innerHTML = `
-        <video autoplay ${isLocal ? 'muted' : ''} playsinline></video>
-        <div class="meet-video-name">${name}</div>
-        <div class="meet-video-mic">🎙️</div>
-      `;
-      this._el.videoGrid.appendChild(tile);
-    }
-
-    const video = tile.querySelector('video');
-    if (video) {
-      video.srcObject = stream;
-      video.play().catch(() => {});
-    }
-  }
-
-  _removeVideoTile(peerId) {
-    document.getElementById('vt_' + peerId)?.remove();
-  }
-
-  // ── Web Speech API transcription ──────────────────────────────────────────
+  /* ── Transcription ──────────────────────────────────────────────────────── */
   _startTranscription() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      console.warn('[MeetRoom] Web Speech API not supported');
-      this._appendTranscriptLine('System', '⚠️ Live transcription not supported in this browser. Try Chrome.', '#94a3b8', false);
+      this._addSystemLine('⚠️ Live transcription requires Chrome browser');
       return;
     }
 
     this.recognition = new SpeechRecognition();
     this.recognition.continuous     = true;
     this.recognition.interimResults = true;
-    this.recognition.lang           = 'en-IN'; // Indian English
+    this.recognition.lang           = 'en-IN';
     this.recognition.maxAlternatives= 1;
 
     const me = this._me();
     let interimEl = null;
 
     this.recognition.onresult = (e) => {
+      if (this.micMuted) return;
+
       let interim = '';
       let final   = '';
-
       for (let i = e.resultIndex; i < e.results.length; i++) {
-        const text = e.results[i][0].transcript;
-        if (e.results[i].isFinal) final += text;
-        else interim += text;
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) final += t;
+        else interim += t;
       }
 
       if (final.trim()) {
-        // Remove interim element
-        interimEl?.remove();
-        interimEl = null;
-
-        const line = { speaker: me.name, text: final.trim(), ts: Date.now(), speakerColor: me.color };
+        interimEl?.remove(); interimEl = null;
+        const line = { speaker: me.name, text: final.trim(), color: me.color, ts: Date.now() };
         this.transcript.push(line);
-        this._appendTranscriptLine(me.name, final.trim(), me.color, true);
-
-        // Broadcast to other participants via socket
-        this._emitSocket('meet:transcript_line', {
-          roomId: this.roomId,
-          ...line,
-        });
+        this._appendTxLine(me.name, final.trim(), me.color, true);
+        this._emitSocket('meet:transcript_line', { roomId: this.roomId, ...line });
       } else if (interim.trim()) {
-        // Show interim (live preview)
         if (!interimEl) {
           interimEl = document.createElement('div');
           interimEl.className = 'meet-tx-line meet-tx-interim';
-          interimEl.innerHTML = `<span class="meet-tx-speaker" style="color:${me.color}">${me.name}</span><span class="meet-tx-text"></span>`;
+          interimEl.innerHTML = `<span class="meet-tx-spk" style="color:${me.color}">${me.name}</span><span class="meet-tx-txt"></span>`;
           this._el.txBody?.appendChild(interimEl);
         }
-        const textEl = interimEl.querySelector('.meet-tx-text');
-        if (textEl) textEl.textContent = interim;
-        this._scrollTranscript();
+        interimEl.querySelector('.meet-tx-txt').textContent = interim;
+        this._scrollTx();
       }
     };
 
     this.recognition.onerror = (e) => {
-      if (e.error === 'no-speech') return; // normal silence
-      console.warn('[MeetRoom] Speech recognition error:', e.error);
+      if (e.error === 'no-speech' || e.error === 'aborted') return;
+      console.warn('[MeetRoom] Speech error:', e.error);
     };
 
     this.recognition.onend = () => {
-      // Auto-restart if meeting is still going
-      if (this.isStarted) {
-        setTimeout(() => {
-          try { this.recognition?.start(); } catch(e) {}
-        }, 200);
+      if (this.isStarted && !this.micMuted) {
+        setTimeout(() => { try { this.recognition?.start(); } catch(e) {} }, 300);
       }
     };
 
-    this.recognition.start();
-    console.log('[MeetRoom] 🎙️ Transcription started');
+    try { this.recognition.start(); } catch(e) {}
   }
 
   _stopTranscription() {
-    if (this.recognition) {
-      try { this.recognition.stop(); } catch(e) {}
-      this.recognition = null;
-    }
+    try { this.recognition?.stop(); } catch(e) {}
+    this.recognition = null;
   }
 
-  // ── Transcript UI ──────────────────────────────────────────────────────────
-  _appendTranscriptLine(speaker, text, color, isLocal) {
+  /* ── Transcript UI ──────────────────────────────────────────────────────── */
+  _appendTxLine(speaker, text, color, isLocal) {
     const body = this._el.txBody;
     if (!body) return;
+    body.querySelector('.meet-tx-empty')?.remove();
 
-    // Remove empty state
-    body.querySelector('.meet-transcript-empty')?.remove();
-
-    const line = document.createElement('div');
-    line.className = 'meet-tx-line' + (isLocal ? ' meet-tx-local' : '');
-    const time = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
-    line.innerHTML = `
-      <div class="meet-tx-meta">
-        <span class="meet-tx-speaker" style="color:${color || '#94a3b8'}">${speaker}</span>
-        <span class="meet-tx-time">${time}</span>
+    const el  = document.createElement('div');
+    el.className = 'meet-tx-line' + (isLocal ? ' meet-tx-mine' : '');
+    const t  = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+    el.innerHTML = `
+      <div class="meet-tx-header">
+        <span class="meet-tx-spk" style="color:${color || '#94a3b8'}">${speaker}</span>
+        <span class="meet-tx-time">${t}</span>
       </div>
-      <div class="meet-tx-text">${text}</div>
+      <div class="meet-tx-txt">${text}</div>
     `;
+    body.appendChild(el);
+    this._scrollTx();
 
-    body.appendChild(line);
-    this._scrollTranscript();
-
-    // Update count
-    const count = body.querySelectorAll('.meet-tx-line:not(.meet-tx-interim)').length;
-    if (this._el.txCount) this._el.txCount.textContent = count + ' lines';
+    const n = body.querySelectorAll('.meet-tx-line:not(.meet-tx-interim)').length;
+    if (this._el.txCount) this._el.txCount.textContent = n + ' lines';
   }
 
-  _scrollTranscript() {
+  _addSystemLine(msg) {
+    const body = this._el.txBody;
+    if (!body) return;
+    const el = document.createElement('div');
+    el.className = 'meet-tx-system';
+    el.textContent = msg;
+    body.appendChild(el);
+    this._scrollTx();
+  }
+
+  _scrollTx() {
     if (this._el.txBody) this._el.txBody.scrollTop = this._el.txBody.scrollHeight;
   }
 
-  _resetTranscript() {
-    this.transcript = [];
-    if (this._el.txBody) this._el.txBody.innerHTML = '<div class="meet-transcript-empty">Start the meeting to begin live transcription</div>';
-    if (this._el.txCount) this._el.txCount.textContent = '0 lines';
-    if (this._el.summaryPnl) this._el.summaryPnl.classList.add('hidden');
+  /* ── Chat panel ──────────────────────────────────────────────────────────── */
+  _addChatMessage(name, text, isMe) {
+    const body = this._el.chatBody;
+    if (!body) return;
+    body.querySelector('.meet-chat-empty')?.remove();
+
+    const el = document.createElement('div');
+    el.className = 'meet-chat-msg' + (isMe ? ' meet-chat-mine' : '');
+    const t = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+    el.innerHTML = `
+      <span class="meet-chat-name">${isMe ? 'You' : name}</span>
+      <div class="meet-chat-bubble">${text}</div>
+      <span class="meet-chat-time">${t}</span>
+    `;
+    body.appendChild(el);
+    body.scrollTop = body.scrollHeight;
   }
 
-  // ── AI Summary ─────────────────────────────────────────────────────────────
+  _sendChat() {
+    const input = this._el.chatInput;
+    const text  = input?.value?.trim();
+    if (!text) return;
+
+    // Send via Jitsi (shows in their chat) + our panel
+    if (this.jitsi) {
+      try { this.jitsi.executeCommand('sendChatMessage', text, '', false); } catch(e) {}
+    } else {
+      // If Jitsi not active, send via Socket.io only
+      this._addChatMessage(this._me().name, text, true);
+      this._emitSocket('meet:chat', { roomId: this.roomId, name: this._me().name, text });
+    }
+    input.value = '';
+  }
+
+  /* ── Participants panel ───────────────────────────────────────────────────── */
+  _updateParticipant(id, data) {
+    this.participants.set(id, { ...(this.participants.get(id) || {}), ...data });
+    this._renderParticipants();
+  }
+
+  _renderParticipants() {
+    const el = this._el.participantList;
+    if (!el) return;
+    const list = Array.from(this.participants.values());
+    if (list.length === 0) { el.innerHTML = '<div class="meet-p-empty">No one yet</div>'; return; }
+
+    el.innerHTML = list.map(p => `
+      <div class="meet-participant">
+        <div class="meet-p-avatar" style="background:${p.color || '#64748b'}">${(p.name || '?').charAt(0)}</div>
+        <div class="meet-p-name">${p.name || 'Unknown'}</div>
+        ${p.active ? '<div class="meet-p-live"></div>' : ''}
+      </div>
+    `).join('');
+  }
+
+  /* ── AI Summary ─────────────────────────────────────────────────────────── */
   async _summariseMeeting() {
     if (!this._el.summaryPnl) return;
-
     this._el.summaryPnl.classList.remove('hidden');
-    if (this._el.summaryBody) {
-      this._el.summaryBody.innerHTML = '<div class="meet-summarising">✨ Gemini is summarising the meeting…</div>';
-    }
+    if (this._el.summaryBody) this._el.summaryBody.innerHTML = '<div class="meet-summarising"><span class="spin">✨</span> Gemini is reading the transcript…</div>';
 
     const apiKey = window._orgApiKey;
-    if (!apiKey) {
-      if (this._el.summaryBody) this._el.summaryBody.innerHTML = '<p>No API key available for summary.</p>';
+    if (!apiKey || this.transcript.length === 0) {
+      if (this._el.summaryBody) this._el.summaryBody.innerHTML = '<p style="color:#64748b;font-size:12px">No transcript to summarise.</p>';
       return;
     }
 
-    const transcriptText = this.transcript
-      .map(l => `${l.speaker}: ${l.text}`)
-      .join('\n');
+    const txText = this.transcript.map(l => `${l.speaker}: ${l.text}`).join('\n');
+    const prompt = `You are summarising a business meeting for Bits & Studios — a premium Robotics + AI + Coding Makerspace launching June 1, 2026 in Ahmedabad, India.
 
-    const prompt = `You are summarising a meeting for Bits & Studios — a premium Robotics + AI + Coding Makerspace in Ahmedabad, India.
+MEETING TRANSCRIPT (${this.transcript.length} lines):
+${txText}
 
-MEETING TRANSCRIPT:
-${transcriptText}
+Write a clean, structured meeting summary with:
 
-Write a structured meeting summary with:
-1. **Key Decisions Made** — bulleted list
-2. **Action Items** — table: Owner | Action | Deadline
-3. **Discussion Summary** — brief paragraph per major topic
-4. **Open Questions / Follow-ups** — things not yet resolved
+1. **Key Decisions** — bulleted list of concrete decisions made
+2. **Action Items** — table format: | Owner | Action | Deadline |
+3. **Discussion Highlights** — brief paragraph per main topic
+4. **Open Questions** — things unresolved, need follow-up
 
-Be specific. Use names from the transcript. Format in HTML using <h3>, <ul>, <li>, <table>, <strong>.
-Write only the summary content — no preamble.`;
+Rules:
+- Use real names from transcript
+- Reference specific Bits & Studios context (launch date June 1, team members, programs)
+- Be concise but complete
+- Format in HTML with <h3>, <ul>, <li>, <table>, <tr>, <th>, <td>, <strong>
+- Write only the content, no preamble`;
 
     try {
-      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + apiKey, {
+      const res  = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.3, maxOutputTokens: 2000 },
-        }),
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.3, maxOutputTokens: 2048 } }),
       });
-
       const data = await res.json();
       let html = data?.candidates?.[0]?.content?.parts?.[0]?.text || 'Summary unavailable';
-      html = html
-        .replace(/```html\n?/g, '').replace(/```\n?/g, '')
-        .replace(/^#{1,6}\s+(.+)$/gm, (_, t) => `<h3>${t}</h3>`)
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .trim();
-
+      html = html.replace(/```html\n?/g,'').replace(/```\n?/g,'')
+                 .replace(/^#{1,6}\s+(.+)$/gm,'<h3>$1</h3>')
+                 .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').trim();
       if (this._el.summaryBody) this._el.summaryBody.innerHTML = html;
-      this._storeSummary(html);
-
+      this._persistSummary(html);
     } catch (err) {
-      if (this._el.summaryBody) this._el.summaryBody.innerHTML = `<p>Summary failed: ${err.message}</p>`;
+      if (this._el.summaryBody) this._el.summaryBody.innerHTML = `<p style="color:#ef4444">Summary failed: ${err.message}</p>`;
     }
   }
 
-  _storeSummary(html) {
-    // Store in meeting node if linked
-    if (this.roomId && window.DB) {
-      const node = window.DB.getNode(this.roomId);
+  _persistSummary(html) {
+    if (this.nodeId) {
+      const node = this.data.getNode(this.nodeId);
       if (node) {
-        window.DB.updateNode(this.roomId, {
-          meetingSummary: html,
+        this.data.updateNode(this.nodeId, {
+          meetingSummary:  html,
           transcriptLines: this.transcript.length,
-          meetingDate: new Date().toISOString(),
+          meetingDate:     new Date().toISOString(),
         });
       }
     }
-    // Also store raw transcript in localStorage
-    const key = 'meet_transcript_' + this.roomId;
-    localStorage.setItem(key, JSON.stringify(this.transcript));
+    localStorage.setItem('meet_tx_' + this.roomId, JSON.stringify(this.transcript));
   }
 
   _saveSummaryToNode() {
-    if (!this.roomId) return;
-    const node = window.DB?.getNode(this.roomId);
-    if (!node) {
-      window.app?.showToast('No meeting node linked — summary saved locally', 'info');
-      return;
-    }
-    window.app?.showToast(`💾 Summary saved to "${node.label}"`, 'success');
-    window.app?.sidebar?.open(this.roomId);
-  }
-
-  // ── Controls ───────────────────────────────────────────────────────────────
-  _toggleMic() {
-    if (!this.localStream) return;
-    this.micActive = !this.micActive;
-    this.localStream.getAudioTracks().forEach(t => { t.enabled = this.micActive; });
-    if (this._el.micBtn) {
-      this._el.micBtn.textContent = this.micActive ? '🎙️' : '🔇';
-      this._el.micBtn.classList.toggle('meet-ctrl-muted', !this.micActive);
+    const node = this.nodeId ? this.data.getNode(this.nodeId) : null;
+    if (node) {
+      window.app?.showToast(`💾 Summary saved to "${node.label}"`, 'success');
+      window.app?.sidebar?.open(this.nodeId);
+    } else {
+      window.app?.showToast('💾 Summary saved locally (no node linked)', 'info');
     }
   }
 
-  _toggleCam() {
-    if (!this.localStream) return;
-    this.camActive = !this.camActive;
-    this.localStream.getVideoTracks().forEach(t => { t.enabled = this.camActive; });
-    if (this._el.camBtn) {
-      this._el.camBtn.textContent = this.camActive ? '📷' : '📷🚫';
-      this._el.camBtn.classList.toggle('meet-ctrl-muted', !this.camActive);
-    }
+  /* ── Bindings ────────────────────────────────────────────────────────────── */
+  _bindEvents() {
+    this._el.closeBtn?.addEventListener('click',  () => this.close());
+    this._el.saveBtn?.addEventListener('click',   () => this._saveSummaryToNode());
+    this._el.endBtn?.addEventListener('click',    () => {
+      if (this.jitsi) {
+        try { this.jitsi.executeCommand('hangup'); } catch(e) {}
+      } else {
+        this.isStarted = false;
+        this._stopTranscription();
+        if (this.transcript.length > 0) this._summariseMeeting();
+      }
+    });
+    this._el.linkBtn?.addEventListener('click',   () => this._copyLink());
+    this._el.chatSend?.addEventListener('click',  () => this._sendChat());
+    this._el.chatInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this._sendChat(); }
+    });
+    this._el.overlay?.addEventListener('click', (e) => {
+      if (e.target === this._el.overlay) this.close();
+    });
   }
 
-  async _shareScreen() {
-    try {
-      const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-      this._addVideoTile('screen', screenStream, 'Screen Share', true);
-      screenStream.getVideoTracks()[0].onended = () => this._removeVideoTile('screen');
-    } catch (e) {
-      if (e.name !== 'AbortError') window.app?.showToast('Screen share failed: ' + e.message, 'error');
-    }
+  _bindSocket() {
+    const tryBind = () => {
+      const socket = window._socket || window._agentSocket;
+      if (!socket) return;
+      socket.on('meet:transcript_line', (d) => {
+        if (d.roomId !== this.roomId || d.speaker === this._me().name) return;
+        const line = { speaker: d.speaker, text: d.text, color: d.color, ts: d.ts };
+        this.transcript.push(line);
+        this._appendTxLine(d.speaker, d.text, d.color, false);
+      });
+      socket.on('meet:chat', (d) => {
+        if (d.roomId !== this.roomId) return;
+        this._addChatMessage(d.name, d.text, false);
+      });
+      socket.on('meet:join', (d) => {
+        if (d.roomId !== this.roomId) return;
+        window.app?.showToast(`📹 ${d.name} joined the meeting`, 'info');
+      });
+    };
+    setTimeout(tryBind, 800);
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
+  /* ── Helpers ─────────────────────────────────────────────────────────────── */
   _me() {
-    const user = window.Auth?.currentUser;
+    const u = window.Auth?.currentUser;
     return {
-      id:    user?.id    || 'anon',
-      name:  user?.name  || localStorage.getItem('bits_collab_name') || 'Me',
-      color: user?.color || '#534AB7',
+      id:       u?.id    || 'anon',
+      name:     u?.name  || localStorage.getItem('bits_collab_name') || 'Me',
+      color:    u?.color || '#534AB7',
+      email:    u?.email || '',
     };
   }
 
-  _setStatus(state, text) {
-    if (!this._el.status) return;
-    this._el.status.textContent = text;
-    this._el.status.className = 'meet-status-badge meet-status-' + state;
+  _colorForName(name) {
+    const map = {
+      'Pratik': '#534AB7', 'Anjalee': '#1D9E75', 'Sohil': '#D85A30',
+      'Mohit':  '#378ADD', 'Aryan':   '#D4537E',  'Mantasha': '#BA7517',
+      'Foram':  '#639922',
+    };
+    for (const [key, color] of Object.entries(map)) {
+      if (name?.toLowerCase().includes(key.toLowerCase())) return color;
+    }
+    return '#64748b';
   }
 
-  _setMeta() {
-    if (this._el.meta) this._el.meta.textContent = `Room: ${this.roomId} · ${this._me().name}`;
+  _setStatus(state, text) {
+    const el = this._el.status;
+    if (!el) return;
+    el.textContent = text;
+    el.className = `meet-status-badge meet-status-${state}`;
+  }
+
+  _copyLink() {
+    const link = `https://${JITSI_DOMAIN}/${this.roomId}`;
+    navigator.clipboard?.writeText(link).then(() => {
+      window.app?.showToast('🔗 Meeting link copied! Share with anyone', 'success');
+    });
   }
 
   _emitSocket(event, data) {
     const socket = window._socket || window._agentSocket;
-    if (socket?.emit) socket.emit(event, data);
+    socket?.emit?.(event, data);
+  }
+
+  _resetPanels() {
+    this.transcript = [];
+    this.participants.clear();
+    if (this._el.txBody)    this._el.txBody.innerHTML  = '<div class="meet-tx-empty">Join the call to start transcription</div>';
+    if (this._el.chatBody)  this._el.chatBody.innerHTML= '<div class="meet-chat-empty">Chat will appear here</div>';
+    if (this._el.txCount)   this._el.txCount.textContent = '0 lines';
+    if (this._el.summaryPnl) this._el.summaryPnl.classList.add('hidden');
+    this._renderParticipants();
   }
 
   _loadScript(src) {
@@ -533,5 +563,4 @@ Write only the summary content — no preamble.`;
   }
 }
 
-// ── Expose globally ──────────────────────────────────────────────────────────
 window.MeetingRoom = MeetingRoom;

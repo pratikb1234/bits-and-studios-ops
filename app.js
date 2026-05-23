@@ -103,6 +103,17 @@ class App {
     this.meetRoom = new MeetingRoom(this.data);
     document.getElementById('tb-meet-room')?.addEventListener('click', () => this.meetRoom.toggle());
 
+    // Meeting room tab switcher
+    document.querySelectorAll('.meet-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.meet-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.meet-tab-pane').forEach(p => p.classList.add('hidden'));
+        tab.classList.add('active');
+        const pane = document.getElementById('meet-tab-' + tab.dataset.tab);
+        pane?.classList.remove('hidden');
+      });
+    });
+
     // ── Keyboard shortcuts ──────────────────────────────────────────────────
     document.addEventListener('keydown', (e) => {
       const meta = e.metaKey || e.ctrlKey;

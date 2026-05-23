@@ -609,57 +609,75 @@ Decided: Launch event on June 1st confirmed."></textarea>
   <!-- ── Live Meeting Room Modal ────────────────────────────────────────── -->
   <div id="meet-room-modal" class="meet-room-overlay hidden">
     <div class="meet-room-container">
-      <!-- Header -->
+
+      <!-- ── Header ───────────────────────────────────────────────── -->
       <div class="meet-room-header">
         <div class="meet-room-title">
           <span class="meet-room-icon">📹</span>
           <div>
             <div class="meet-room-name" id="meet-room-name">Live Meeting Room</div>
-            <div class="meet-room-meta" id="meet-room-meta">Ready to start</div>
+            <div class="meet-room-meta" id="meet-room-meta">Powered by Jitsi Meet</div>
           </div>
         </div>
         <div class="meet-room-header-btns">
-          <div class="meet-status-badge" id="meet-status-badge">● Idle</div>
-          <button id="meet-room-close" class="meet-close-btn">✕</button>
+          <div class="meet-status-badge" id="meet-status-badge">○ Lobby</div>
+          <button id="meet-link-btn" class="meet-action-btn" title="Copy meeting link">🔗 Share Link</button>
+          <button id="meet-end-btn"  class="meet-action-btn meet-action-end" title="End meeting &amp; summarise">⏹ End &amp; Summarise</button>
+          <button id="meet-room-close" class="meet-close-btn" title="Close">✕</button>
         </div>
       </div>
 
+      <!-- ── Body: Jitsi + Side Panel ─────────────────────────────── -->
       <div class="meet-room-body">
-        <!-- Video grid -->
-        <div class="meet-video-section">
-          <div class="meet-video-grid" id="meet-video-grid">
-            <!-- Local video injected by JS -->
-          </div>
-          <!-- Controls bar -->
-          <div class="meet-controls">
-            <button class="meet-ctrl-btn" id="meet-btn-mic" title="Mute/Unmute">🎙️</button>
-            <button class="meet-ctrl-btn" id="meet-btn-cam" title="Camera on/off">📷</button>
-            <button class="meet-ctrl-btn meet-ctrl-record" id="meet-btn-start" title="Start meeting">▶ Start</button>
-            <button class="meet-ctrl-btn meet-ctrl-end hidden" id="meet-btn-end" title="End meeting">⏹ End &amp; Summarise</button>
-            <button class="meet-ctrl-btn meet-ctrl-screen" id="meet-btn-screen" title="Share screen">🖥</button>
-          </div>
-        </div>
 
-        <!-- Transcript panel -->
-        <div class="meet-transcript-panel">
-          <div class="meet-transcript-header">
-            <span>📝 Live Transcript</span>
-            <span class="meet-transcript-count" id="meet-line-count">0 lines</span>
+        <!-- Jitsi iFrame fills this container -->
+        <div id="jitsi-container" class="meet-jitsi-wrap"></div>
+
+        <!-- Right side panel: Participants / Transcript / Chat -->
+        <div class="meet-side-panel">
+
+          <!-- Tab switcher -->
+          <div class="meet-tabs">
+            <button class="meet-tab active" data-tab="participants">👥 People</button>
+            <button class="meet-tab" data-tab="transcript">📝 Transcript <span id="meet-line-count" class="meet-tab-badge">0</span></button>
+            <button class="meet-tab" data-tab="chat">💬 Chat</button>
           </div>
-          <div class="meet-transcript-body" id="meet-transcript-body">
-            <div class="meet-transcript-empty">
-              Start the meeting to begin live transcription
+
+          <!-- Participants tab -->
+          <div class="meet-tab-pane active" id="meet-tab-participants">
+            <div class="meet-participants-list" id="meet-participants">
+              <div class="meet-p-empty">Join the call to see participants</div>
             </div>
           </div>
-          <!-- Summary (shown after meeting ends) -->
+
+          <!-- Transcript tab -->
+          <div class="meet-tab-pane hidden" id="meet-tab-transcript">
+            <div class="meet-transcript-body" id="meet-transcript-body">
+              <div class="meet-tx-empty">Join the call to start transcription</div>
+            </div>
+          </div>
+
+          <!-- Chat tab -->
+          <div class="meet-tab-pane hidden" id="meet-tab-chat">
+            <div class="meet-chat-body" id="meet-chat-body">
+              <div class="meet-chat-empty">Chat will appear here</div>
+            </div>
+            <div class="meet-chat-input-row">
+              <input type="text" id="meet-chat-input" class="meet-chat-input" placeholder="Send a message…" />
+              <button id="meet-chat-send" class="meet-chat-send-btn">↑</button>
+            </div>
+          </div>
+
+          <!-- AI Summary (slides in after meeting ends) -->
           <div class="meet-summary-panel hidden" id="meet-summary-panel">
             <div class="meet-summary-header">✨ AI Meeting Summary</div>
             <div class="meet-summary-body" id="meet-summary-body"></div>
             <button class="meet-save-btn" id="meet-save-btn">💾 Save to Meeting Node</button>
           </div>
-        </div>
-      </div>
-    </div>
+
+        </div><!-- /side panel -->
+      </div><!-- /body -->
+    </div><!-- /container -->
   </div>
 </body>
 </html>
