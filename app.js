@@ -343,30 +343,52 @@ class App {
 
 // Bootstrap — auth first, then app
 document.addEventListener('DOMContentLoaded', async () => {
-  // 1. Boot auth (restore or show login)
+  // Safety net — if JS crashes entirely, remove the overlay after 4s so page isn't blank
+  const safetyTimer = setTimeout(() => {
+    const overlay = document.getElementById('login-overlay');
+    if (overlay && !overlay.classList.contains('hidden')) {
+      overlay.classList.add('hidden');
+    }
+    if (!window.app) {
+      try { window.app = new App(); } catch(e) { console.error('[App] Safety init failed:', e); }
+    }
+  }, 4000);
+
+  // 1. Boot auth (restore session or show login)
   let loggedIn = false;
   try {
     loggedIn = await window.Auth.boot();
   } catch (e) {
-    console.warn('[Auth] Boot failed, continuing without auth:', e.message);
-    loggedIn = true; // allow app to load even if auth server is down
+    console.warn('[Auth] Boot failed, skipping auth:', e.message);
+    loggedIn = true; // let app load even if auth server is unreachable
   }
 
   if (!loggedIn) {
-    // Show login screen — app will init after login via auth:login event
+    // Show login screen — app inits after user picks profile
     window.Auth.showLoginScreen();
 
     window.addEventListener('auth:login', () => {
+      clearTimeout(safetyTimer);
       window.Auth.hideLoginScreen();
-      window.app = new App();
-      _bindGlobalShortcuts();
+      try {
+        window.app = new App();
+        _bindGlobalShortcuts();
+      } catch(e) {
+        console.error('[App] Init failed after login:', e);
+      }
     }, { once: true });
     return;
   }
 
-  // Already logged in — go straight to app
-  window.app = new App();
-  _bindGlobalShortcuts();
+  // Already logged in — hide overlay (safety) and launch app
+  clearTimeout(safetyTimer);
+  window.Auth.hideLoginScreen();
+  try {
+    window.app = new App();
+    _bindGlobalShortcuts();
+  } catch(e) {
+    console.error('[App] Init failed:', e);
+  }
 });
 
 function _bindGlobalShortcuts() {
