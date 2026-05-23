@@ -19,6 +19,7 @@ class MeetingRoom {
     this.micMuted   = false;
     this.participants = new Map();
     this._txFlushInterval = null;
+    this._lastFlushCount  = 0;   // tracks how many lines already saved to server
 
     this._el = {
       overlay:      document.getElementById('meet-room-modal'),
@@ -174,17 +175,16 @@ class MeetingRoom {
 
   /* ── Flush transcript to server every 30s ────────────────────────────────── */
   _startTxFlush() {
-    let lastFlushCount = 0;
     this._txFlushInterval = setInterval(async () => {
-      if (!this.meetingId || this.transcript.length === lastFlushCount) return;
-      const newLines = this.transcript.slice(lastFlushCount);
-      lastFlushCount = this.transcript.length;
+      if (!this.meetingId || this.transcript.length === this._lastFlushCount) return;
+      const newLines = this.transcript.slice(this._lastFlushCount);
+      this._lastFlushCount = this.transcript.length;
       fetch(`/api/meetings/${this.meetingId}`, {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ transcriptLines: newLines }),
       }).catch(() => {});
-    }, 30000);
+    }, 20000); // every 20s
   }
 
   /* ── Jitsi ──────────────────────────────────────────────────────────────── */
@@ -310,18 +310,20 @@ class MeetingRoom {
   async _endMeeting() {
     if (!this.meetingId) { this._summarise(); return; }
 
-    // First flush all remaining transcript lines
+    // Only send lines not yet flushed (avoids duplication with periodic flush)
+    const remaining = this.transcript.slice(this._lastFlushCount);
+    this._lastFlushCount = this.transcript.length;
+
     await fetch(`/api/meetings/${this.meetingId}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        transcriptLines: this.transcript,
-        endedAt: new Date().toISOString(),
-        status: 'completed',
-        participants: Array.from(this.participants.values()).map(p => p.name.replace(' (You)', '')),
+        transcriptLines: remaining,
+        endedAt:        new Date().toISOString(),
+        status:         'completed',
+        participants:   Array.from(this.participants.values()).map(p => p.name.replace(' (You)', '')),
       }),
     }).catch(() => {});
 
-    // Generate and save summary
     await this._summarise();
   }
 

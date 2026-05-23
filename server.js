@@ -318,10 +318,17 @@ app.patch('/api/meetings/:id', (req, res) => {
     delete updates.participant;
   }
 
-  // Append transcript lines (don't overwrite)
+  // Merge transcript lines — deduplicate by timestamp, sort chronologically
+  // Safe for multiple participants all flushing their copy
   if (updates.transcriptLines && Array.isArray(updates.transcriptLines)) {
-    sharedState.meetings[idx].transcript.push(...updates.transcriptLines);
-    sharedState.meetings[idx].transcriptLines = sharedState.meetings[idx].transcript.length;
+    const existing = sharedState.meetings[idx].transcript || [];
+    const existingTs = new Set(existing.map(l => l.ts));
+    const newLines = updates.transcriptLines.filter(l => l.ts && !existingTs.has(l.ts));
+    existing.push(...newLines);
+    // Sort by timestamp → single unified chronological transcript
+    existing.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    sharedState.meetings[idx].transcript = existing;
+    sharedState.meetings[idx].transcriptLines = existing.length;
     delete updates.transcriptLines;
   }
 

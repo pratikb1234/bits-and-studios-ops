@@ -130,11 +130,11 @@ class MeetingsPanel {
     `;
   }
 
-  /* ── Expand: show full transcript + summary ──────────────────────────── */
+  /* ── Expand: full transcript + summary in overlay ─────────────────────── */
   async _expandMeeting(id) {
     const overlay = document.createElement('div');
     overlay.className = 'map-expand-overlay';
-    overlay.innerHTML = `<div class="map-expand-dialog"><div class="map-expand-loading">⟳ Loading meeting…</div></div>`;
+    overlay.innerHTML = `<div class="map-expand-dialog"><div class="map-expand-loading">⟳ Loading…</div></div>`;
     document.body.appendChild(overlay);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 
@@ -142,49 +142,70 @@ class MeetingsPanel {
       const res  = await fetch(`/api/meetings/${id}`);
       const data = await res.json();
       const m    = data.meeting;
+      if (!m) throw new Error('Meeting not found');
 
-      const date = new Date(m.startedAt).toLocaleString('en-IN', { weekday:'long', day:'numeric', month:'long', year:'numeric', hour:'2-digit', minute:'2-digit' });
+      const date = new Date(m.startedAt).toLocaleString('en-IN', {
+        weekday:'long', day:'numeric', month:'long', year:'numeric',
+        hour:'2-digit', minute:'2-digit'
+      });
       const participants = (m.participants || []).join(', ') || 'None recorded';
-      const txLines = (m.transcript || []).map(l =>
-        `<div class="met-tx-row"><span class="met-tx-spk" style="color:${this._colorForName(l.speaker)}">${l.speaker}</span><span class="met-tx-text">${l.text}</span><span class="met-tx-ts">${new Date(l.ts).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}</span></div>`
-      ).join('') || '<div style="color:#475569;font-size:12px;padding:16px">No transcript recorded</div>';
+      const txLines      = m.transcript || [];
+
+      // Build unified chronological transcript HTML
+      const txHtml = txLines.length
+        ? txLines.map(l => {
+            const t = l.ts ? new Date(l.ts).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '';
+            const c = this._colorForName(l.speaker);
+            return `
+              <div class="met-tx-row">
+                <span class="met-tx-spk" style="color:${c}">${l.speaker || '?'}</span>
+                <span class="met-tx-text">${l.text || ''}</span>
+                <span class="met-tx-ts">${t}</span>
+              </div>`;
+          }).join('')
+        : '<div class="met-tx-empty">No transcript recorded for this meeting.</div>';
 
       overlay.querySelector('.map-expand-dialog').innerHTML = `
         <div class="map-expand-header">
           <div>
-            <div class="map-expand-title">${m.title}</div>
-            <div class="map-expand-meta">${date} · ${m.duration || 'Duration unknown'} · ${m.transcriptLines || 0} transcript lines</div>
+            <div class="map-expand-title">${m.title || 'Untitled Meeting'}</div>
+            <div class="map-expand-meta">${date}${m.duration ? ' · ' + m.duration : ''}${txLines.length ? ' · ' + txLines.length + ' transcript lines' : ''}</div>
             <div class="map-expand-participants">👥 ${participants}</div>
           </div>
           <button class="map-expand-close">✕</button>
         </div>
         <div class="map-expand-tabs">
-          <button class="map-exp-tab active" data-tab="summary">✨ AI Summary</button>
-          <button class="map-exp-tab" data-tab="transcript">📝 Full Transcript</button>
+          <button class="map-exp-tab active" data-tab="transcript">📝 Full Transcript (${txLines.length} lines)</button>
+          <button class="map-exp-tab" data-tab="summary">✨ AI Summary</button>
         </div>
-        <div class="map-exp-body" id="map-exp-body-${id}">
-          <div class="map-exp-pane active" id="met-summary-pane">
-            ${m.summary || '<div style="color:#475569;padding:24px;text-align:center">No summary generated yet</div>'}
+        <div class="map-exp-body">
+          <div class="map-exp-pane active" id="met-transcript-pane-${id}">
+            <div class="met-tx-list">${txHtml}</div>
           </div>
-          <div class="map-exp-pane hidden" id="met-tx-pane">
-            <div class="met-tx-list">${txLines}</div>
+          <div class="map-exp-pane hidden" id="met-summary-pane-${id}">
+            ${m.summary
+              ? `<div class="met-summary-content">${m.summary}</div>`
+              : '<div class="met-no-summary">No AI summary yet. The summary is generated when the meeting host ends the call.</div>'}
           </div>
         </div>
       `;
 
-      // Tab switching
       overlay.querySelectorAll('.map-exp-tab').forEach(tab => {
         tab.addEventListener('click', () => {
           overlay.querySelectorAll('.map-exp-tab').forEach(t => t.classList.remove('active'));
           overlay.querySelectorAll('.map-exp-pane').forEach(p => p.classList.add('hidden'));
           tab.classList.add('active');
-          overlay.querySelector('#met-' + tab.dataset.tab + '-pane')?.classList.remove('hidden');
+          const paneId = tab.dataset.tab === 'transcript'
+            ? `met-transcript-pane-${id}`
+            : `met-summary-pane-${id}`;
+          overlay.querySelector('#' + paneId)?.classList.remove('hidden');
         });
       });
       overlay.querySelector('.map-expand-close').addEventListener('click', () => overlay.remove());
 
     } catch (err) {
-      overlay.querySelector('.map-expand-dialog').innerHTML = `<div style="color:#ef4444;padding:32px">Failed to load: ${err.message}</div><button onclick="this.closest('.map-expand-overlay').remove()">Close</button>`;
+      overlay.querySelector('.map-expand-dialog').innerHTML =
+        `<div style="color:#ef4444;padding:32px">Failed: ${err.message}</div><button onclick="this.closest('.map-expand-overlay').remove()" style="margin:0 32px;padding:8px 16px;background:#1e293b;border:none;color:#94a3b8;border-radius:8px;cursor:pointer">Close</button>`;
     }
   }
 
@@ -277,22 +298,36 @@ class MeetingsPanel {
     return tmp.textContent || '';
   }
 
-  /* ── Static: build Jarvis context from all meetings ─────────────────── */
+  /* ── Static: build full Jarvis context from ALL meetings ───────────────── */
   static async buildJarvisContext() {
     try {
       const res  = await fetch('/api/meetings');
       const data = await res.json();
-      const meetings = (data.meetings || []).filter(m => m.summary || m.transcriptLines > 0);
+      const meetings = (data.meetings || []);
       if (!meetings.length) return '';
 
-      const lines = meetings.map(m => {
-        const date = m.startedAt ? new Date(m.startedAt).toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' }) : 'Unknown date';
+      // For each meeting: full chronological transcript (Pratik: ... Anjalee: ...)
+      const sections = meetings.map(m => {
+        const date = m.startedAt
+          ? new Date(m.startedAt).toLocaleDateString('en-IN', { weekday:'short', day:'numeric', month:'short', year:'numeric' })
+          : 'Unknown date';
         const parts = (m.participants || []).join(', ');
-        const summaryText = m.summary ? MeetingsPanel._strip(m.summary).slice(0, 600) : 'No summary';
-        return `[${date}] "${m.title}" (${m.duration || '?'} · ${parts})\n${summaryText}`;
+        const duration = m.duration || '?';
+
+        // Full transcript — every line, every speaker, in order
+        const txText = (m.transcript || []).length
+          ? (m.transcript).map(l => `  ${l.speaker}: ${l.text}`).join('\n')
+          : '  (no transcript recorded)';
+
+        // Summary as plain text (strip HTML tags)
+        const summaryText = m.summary
+          ? m.summary.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+          : '(no summary)';
+
+        return `Meeting: "${m.title}" | ${date} | ${duration} | Participants: ${parts}\nSummary: ${summaryText}\nFull Transcript:\n${txText}`;
       });
 
-      return `\n\n── MEETING HISTORY (${meetings.length} meetings) ──\n` + lines.join('\n\n---\n');
+      return `\n\n════════════════════════════════════════════\n📅 ALL TEAM MEETINGS (${meetings.length} total — full transcripts)\n════════════════════════════════════════════\n` + sections.join('\n\n────────────────────────\n');
     } catch { return ''; }
   }
 
