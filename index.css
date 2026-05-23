@@ -4321,3 +4321,283 @@ body::before {
   transition: color 0.2s;
 }
 .login-back-btn:hover { color: #94a3b8; }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   UNDO / REDO toolbar buttons
+   ══════════════════════════════════════════════════════════════════════════════ */
+#tb-undo, #tb-redo {
+  font-size: 16px;
+  transition: all 0.2s;
+  min-width: 32px;
+}
+#tb-undo:disabled, #tb-redo:disabled { opacity: 0.3; cursor: not-allowed; }
+#tb-undo:not(:disabled):hover { color: #6366f1; }
+#tb-redo:not(:disabled):hover { color: #6366f1; }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   NODE CHANGE FLASH — yellow→green glow when a node updates
+   ══════════════════════════════════════════════════════════════════════════════ */
+@keyframes nodeFlash {
+  0%   { filter: drop-shadow(0 0 0px transparent); }
+  15%  { filter: drop-shadow(0 0 10px #f59e0b); }
+  50%  { filter: drop-shadow(0 0 8px #22c55e); }
+  100% { filter: drop-shadow(0 0 0px transparent); }
+}
+.mm-node-flash { animation: nodeFlash 1.6s ease-out forwards; }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   DELETE CONFIRMATION MODAL
+   ══════════════════════════════════════════════════════════════════════════════ */
+.delete-modal-overlay {
+  position: fixed; inset: 0; z-index: 10100;
+  background: rgba(0,0,0,0.65);
+  backdrop-filter: blur(6px);
+  display: flex; align-items: center; justify-content: center;
+  animation: fadeIn 0.15s ease;
+}
+.delete-modal-overlay.hidden { display: none; }
+.delete-modal {
+  background: #0f172a;
+  border: 1px solid rgba(239,68,68,0.35);
+  border-radius: 20px;
+  padding: 36px 32px;
+  max-width: 420px; width: 90%;
+  text-align: center;
+  box-shadow: 0 32px 64px rgba(0,0,0,0.6), 0 0 0 1px rgba(239,68,68,0.1);
+  animation: scaleIn 0.2s cubic-bezier(0.34,1.56,0.64,1);
+}
+@keyframes scaleIn { from { transform: scale(0.88); opacity:0; } to { transform: scale(1); opacity:1; } }
+.delete-modal-icon { font-size: 44px; margin-bottom: 14px; }
+.delete-modal-title {
+  font-size: 18px; font-weight: 700; color: #f1f5f9; margin-bottom: 10px;
+}
+.delete-modal-sub {
+  font-size: 13px; color: #94a3b8; line-height: 1.6;
+}
+.delete-modal-sub kbd {
+  background: #1e293b; border: 1px solid #334155;
+  padding: 1px 6px; border-radius: 5px; font-size: 11px; color: #e2e8f0;
+}
+.delete-modal-btns {
+  display: flex; gap: 12px; margin-top: 28px; justify-content: center;
+}
+.delete-cancel-btn {
+  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
+  color: #94a3b8; padding: 10px 24px; border-radius: 10px;
+  cursor: pointer; font-family: inherit; font-size: 14px; transition: all 0.15s;
+}
+.delete-cancel-btn:hover { background: rgba(255,255,255,0.1); color: #f1f5f9; }
+.delete-confirm-btn {
+  background: linear-gradient(135deg,#ef4444,#dc2626);
+  border: none; color: white;
+  padding: 10px 28px; border-radius: 10px;
+  cursor: pointer; font-family: inherit; font-size: 14px; font-weight: 700;
+  transition: filter 0.15s;
+}
+.delete-confirm-btn:hover { filter: brightness(1.15); }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   LIVE MEETING ROOM BUTTON
+   ══════════════════════════════════════════════════════════════════════════════ */
+.meet-room-btn {
+  background: linear-gradient(135deg,#7c3aed,#4f46e5) !important;
+  color: white !important;
+  border: none !important;
+}
+.meet-room-btn:hover { filter: brightness(1.15); }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   LIVE MEETING ROOM MODAL
+   ══════════════════════════════════════════════════════════════════════════════ */
+.meet-room-overlay {
+  position: fixed; inset: 0; z-index: 10050;
+  background: rgba(0,0,0,0.85);
+  backdrop-filter: blur(12px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+}
+.meet-room-overlay.hidden { display: none; }
+
+.meet-room-container {
+  background: #080c14;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 20px;
+  width: 100%; max-width: 1100px;
+  max-height: 90vh;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 48px 96px rgba(0,0,0,0.7);
+}
+
+/* Header */
+.meet-room-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  background: rgba(255,255,255,0.02);
+}
+.meet-room-title {
+  display: flex; align-items: center; gap: 12px;
+}
+.meet-room-icon { font-size: 24px; }
+.meet-room-name { font-size: 16px; font-weight: 700; color: #f1f5f9; }
+.meet-room-meta { font-size: 11px; color: #64748b; margin-top: 2px; }
+.meet-room-header-btns { display: flex; align-items: center; gap: 10px; }
+
+.meet-status-badge {
+  font-size: 11px; font-weight: 700; padding: 4px 10px;
+  border-radius: 20px; background: rgba(255,255,255,0.06); color: #64748b;
+}
+.meet-status-live  { background: rgba(239,68,68,0.15); color: #ef4444; animation: livePulse 2s infinite; }
+.meet-status-connecting { background: rgba(99,102,241,0.15); color: #6366f1; }
+.meet-status-error { background: rgba(239,68,68,0.15); color: #ef4444; }
+@keyframes livePulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
+
+.meet-close-btn {
+  background: rgba(255,255,255,0.06); border: none; color: #64748b;
+  width: 32px; height: 32px; border-radius: 8px; cursor: pointer;
+  font-size: 16px; transition: all 0.15s;
+}
+.meet-close-btn:hover { background: rgba(239,68,68,0.15); color: #ef4444; }
+
+/* Body layout */
+.meet-room-body {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Video section */
+.meet-video-section {
+  display: flex; flex-direction: column;
+  background: #040608;
+  border-right: 1px solid rgba(255,255,255,0.06);
+}
+.meet-video-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 4px;
+  padding: 8px;
+  overflow: auto;
+  min-height: 300px;
+}
+.meet-video-tile {
+  position: relative;
+  background: #0d1117;
+  border-radius: 12px;
+  overflow: hidden;
+  aspect-ratio: 16/9;
+}
+.meet-video-tile video {
+  width: 100%; height: 100%; object-fit: cover;
+}
+.meet-video-name {
+  position: absolute; bottom: 8px; left: 10px;
+  font-size: 11px; font-weight: 600; color: white;
+  background: rgba(0,0,0,0.6); padding: 2px 8px; border-radius: 20px;
+  backdrop-filter: blur(4px);
+}
+.meet-video-mic {
+  position: absolute; top: 8px; right: 8px;
+  font-size: 14px; background: rgba(0,0,0,0.5); padding: 4px 6px; border-radius: 8px;
+}
+.meet-video-local { border: 2px solid #4f46e5; }
+
+/* Controls bar */
+.meet-controls {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 12px 16px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  background: rgba(255,255,255,0.02);
+}
+.meet-ctrl-btn {
+  background: rgba(255,255,255,0.08); border: none; color: #e2e8f0;
+  padding: 10px 16px; border-radius: 12px; cursor: pointer;
+  font-family: inherit; font-size: 13px; font-weight: 600;
+  transition: all 0.15s;
+}
+.meet-ctrl-btn:hover { background: rgba(255,255,255,0.14); }
+.meet-ctrl-muted { background: rgba(239,68,68,0.2) !important; color: #ef4444 !important; }
+.meet-ctrl-record {
+  background: linear-gradient(135deg,#22c55e,#16a34a) !important; color: white !important;
+}
+.meet-ctrl-end {
+  background: linear-gradient(135deg,#ef4444,#dc2626) !important; color: white !important;
+}
+.meet-ctrl-screen { background: rgba(99,102,241,0.15) !important; color: #818cf8 !important; }
+
+/* Transcript panel */
+.meet-transcript-panel {
+  display: flex; flex-direction: column;
+  background: #080c14;
+  min-height: 0;
+}
+.meet-transcript-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  font-size: 12px; font-weight: 700; color: #94a3b8;
+}
+.meet-transcript-count { font-size: 10px; color: #475569; }
+.meet-transcript-body {
+  flex: 1; overflow-y: auto; padding: 8px 12px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.meet-transcript-empty {
+  display: flex; align-items: center; justify-content: center;
+  height: 100%; color: #334155; font-size: 12px; text-align: center;
+  padding: 24px;
+}
+
+/* Transcript lines */
+.meet-tx-line {
+  background: rgba(255,255,255,0.02);
+  border-radius: 8px; padding: 8px 10px;
+  border-left: 2px solid rgba(255,255,255,0.08);
+  transition: background 0.2s;
+}
+.meet-tx-line:hover { background: rgba(255,255,255,0.04); }
+.meet-tx-local { border-left-color: #4f46e5; }
+.meet-tx-interim { opacity: 0.5; font-style: italic; border-left-color: #334155; }
+.meet-tx-meta {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 3px;
+}
+.meet-tx-speaker { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; }
+.meet-tx-time { font-size: 9px; color: #475569; }
+.meet-tx-text { font-size: 12px; color: #cbd5e1; line-height: 1.5; }
+
+/* Summary panel */
+.meet-summary-panel {
+  border-top: 1px solid rgba(255,255,255,0.07);
+  padding: 12px;
+  background: rgba(99,102,241,0.04);
+  max-height: 50%;
+  overflow-y: auto;
+}
+.meet-summary-panel.hidden { display: none; }
+.meet-summary-header {
+  font-size: 12px; font-weight: 700; color: #818cf8; margin-bottom: 8px;
+}
+.meet-summary-body { font-size: 11px; color: #94a3b8; line-height: 1.6; }
+.meet-summary-body h3 { font-size: 12px; color: #e2e8f0; margin: 10px 0 4px; }
+.meet-summary-body table { width: 100%; border-collapse: collapse; font-size: 10px; margin: 6px 0; }
+.meet-summary-body th { background: rgba(255,255,255,0.05); padding: 4px 8px; text-align: left; color: #64748b; }
+.meet-summary-body td { padding: 4px 8px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+.meet-summarising { color: #818cf8; font-size: 12px; padding: 16px; text-align: center; }
+.meet-save-btn {
+  width: 100%; margin-top: 10px;
+  background: linear-gradient(135deg,#4f46e5,#7c3aed);
+  border: none; color: white; padding: 8px;
+  border-radius: 8px; cursor: pointer; font-family: inherit;
+  font-size: 12px; font-weight: 700;
+}
+.meet-save-btn:hover { filter: brightness(1.1); }
+
+@media (max-width: 768px) {
+  .meet-room-body { grid-template-columns: 1fr; }
+  .meet-transcript-panel { max-height: 280px; }
+}

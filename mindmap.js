@@ -585,10 +585,12 @@ class MindMap {
       });
       options.push({
         label: 'Delete Node (Del)', icon: '🗑️', danger: true, action: () => {
-           if (confirm(`Delete "${d.label}" and all sub-tasks?`)) {
-             this.data.deleteNode(d.id);
-             this.selectNode(null);
-           }
+          if (window.app?._confirmDelete) {
+            window.app._confirmDelete(d.id);
+          } else if (confirm(`Delete "${d.label}" and all sub-tasks?`)) {
+            this.data.deleteNode(d.id);
+            this.selectNode(null);
+          }
         }
       });
     }

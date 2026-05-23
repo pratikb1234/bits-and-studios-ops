@@ -95,11 +95,48 @@ class App {
       }
     };
     
-    this.mindMap.callbacks.onNodeDoubleTap = (node) => {
-      // Focus node
-      this.mindMap.focusNode(node.id);
-    };
-    
+    // ── Undo / Redo ────────────────────────────────────────────────────────
+    document.getElementById('tb-undo')?.addEventListener('click', () => this._undo());
+    document.getElementById('tb-redo')?.addEventListener('click', () => this._redo());
+
+    // ── Live Meeting Room ───────────────────────────────────────────────────
+    this.meetRoom = new MeetingRoom(this.data);
+    document.getElementById('tb-meet-room')?.addEventListener('click', () => this.meetRoom.toggle());
+
+    // ── Keyboard shortcuts ──────────────────────────────────────────────────
+    document.addEventListener('keydown', (e) => {
+      const meta = e.metaKey || e.ctrlKey;
+      // Undo: Cmd+Z
+      if (meta && !e.shiftKey && e.key === 'z' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        this._undo();
+      }
+      // Redo: Cmd+Shift+Z
+      if (meta && e.shiftKey && e.key === 'z') {
+        e.preventDefault();
+        this._redo();
+      }
+      // Delete selected node: Del / Backspace (only when nothing is focused)
+      if ((e.key === 'Delete' || e.key === 'Backspace') && document.activeElement === document.body) {
+        const nodeId = this.mindMap?.selectedNodeId;
+        if (nodeId) { e.preventDefault(); this._confirmDelete(nodeId); }
+      }
+    });
+
+    // ── Node change flash ───────────────────────────────────────────────────
+    this.data.onChange((type, payload) => {
+      if (type === 'update' && payload?.id) {
+        setTimeout(() => {
+          const el = document.getElementById('ui-' + payload.id);
+          if (el) {
+            el.classList.add('mm-node-flash');
+            setTimeout(() => el.classList.remove('mm-node-flash'), 1800);
+          }
+        }, 60);
+      }
+      this._updateUndoRedoBtns();
+    });
+
     // Toolbar Actions
     document.getElementById('tb-add-node').addEventListener('click', () => {
       const parentId = this.mindMap.selectedNodeId || 'root';
@@ -216,7 +253,87 @@ class App {
     });
   }
   
+  // ── Undo / Redo ─────────────────────────────────────────────────────────────
+  _undo() {
+    const ok = this.data.undo();
+    if (ok) {
+      this.mindMap?.render(true);
+      this.showToast('↩ Undone — Cmd+Shift+Z to redo', 'info');
+    } else {
+      this.showToast('Nothing to undo', 'info');
+    }
+    this._updateUndoRedoBtns();
+  }
+
+  _redo() {
+    const ok = this.data.redo();
+    if (ok) {
+      this.mindMap?.render(true);
+      this.showToast('↪ Redone', 'info');
+    } else {
+      this.showToast('Nothing to redo', 'info');
+    }
+    this._updateUndoRedoBtns();
+  }
+
+  _updateUndoRedoBtns() {
+    const undoBtn = document.getElementById('tb-undo');
+    const redoBtn = document.getElementById('tb-redo');
+    if (undoBtn) undoBtn.disabled = (this.data._undoStack?.length || 0) === 0;
+    if (redoBtn) redoBtn.disabled = (this.data._redoStack?.length || 0) === 0;
+  }
+
+  _confirmDelete(nodeId) {
+    const node = this.data.getNode(nodeId);
+    if (!node || !node.parentId) return; // can't delete root
+
+    const descendants = this.data.getDescendants(nodeId);
+    const childCount  = descendants.length;
+
+    const modal    = document.getElementById('delete-confirm-modal');
+    const titleEl  = document.getElementById('delete-modal-title');
+    const subEl    = document.getElementById('delete-modal-sub');
+    const cancelEl = document.getElementById('delete-modal-cancel');
+    const confirmEl= document.getElementById('delete-modal-confirm');
+    if (!modal) {
+      // Fallback to native confirm
+      if (confirm(`Delete "${node.label}"${childCount ? ` and ${childCount} sub-tasks` : ''}?`)) {
+        this.data.deleteNode(nodeId);
+        this.mindMap?.selectNode(null);
+        this.sidebar?.close();
+      }
+      return;
+    }
+
+    titleEl.textContent = `Delete "${node.label}"?`;
+    subEl.innerHTML = (childCount > 0
+      ? `This will also delete <strong>${childCount} sub-task${childCount !== 1 ? 's' : ''}</strong>. `
+      : '') + 'Can be undone with <kbd>Cmd+Z</kbd>.';
+
+    modal.classList.remove('hidden');
+
+    const cleanup = () => modal.classList.add('hidden');
+    const doDelete = () => {
+      cleanup();
+      this.data.deleteNode(nodeId);
+      this.mindMap?.selectNode(null);
+      this.sidebar?.close();
+      this._updateUndoRedoBtns();
+      this.showToast(`🗑 "${node.label}" deleted — Cmd+Z to undo`, 'info');
+    };
+
+    // Remove old listeners then re-add
+    cancelEl.replaceWith(cancelEl.cloneNode(true));
+    confirmEl.replaceWith(confirmEl.cloneNode(true));
+    document.getElementById('delete-modal-cancel').addEventListener('click', cleanup);
+    document.getElementById('delete-modal-confirm').addEventListener('click', doDelete);
+    // Close on backdrop
+    const backdropClose = (e) => { if (e.target === modal) { cleanup(); modal.removeEventListener('click', backdropClose); } };
+    modal.addEventListener('click', backdropClose);
+  }
+
   updateStats() {
+
     const nodes = this.data.getAllNodes();
     const tasks = nodes.filter(n => n.id !== 'root' && n.parentId !== 'root');
     const doneTasks = tasks.filter(n => n.status === 'done');
