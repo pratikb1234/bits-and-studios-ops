@@ -217,19 +217,20 @@ class DocsPanel {
   newDocForTask(node) {
     if (!node) throw new Error('No task node provided');
 
-    // Pick best template based on area
+    // Map area/dept to actual MEMO_TEMPLATES keys
     const areaTemplateMap = {
-      'brand':      'brand',
-      'Brand':      'brand',
-      'marketing':  'marketing',
-      'Marketing':  'marketing',
-      'operations': 'operations',
-      'Operations': 'operations',
-      'curriculum': 'product',
-      'Product':    'product',
+      'brand':      'prfaq',
+      'Brand':      'prfaq',
+      'marketing':  '1pager',
+      'Marketing':  '1pager',
+      'operations': '6pager',
+      'Operations': '6pager',
+      'curriculum': 'launch_guide',
+      'Product':    'launch_guide',
+      'curriculum': 'launch_guide',
     };
-    const templateKey = areaTemplateMap[node.area || node.department] || 'strategy';
-    const template    = MEMO_TEMPLATES[templateKey] || MEMO_TEMPLATES[Object.keys(MEMO_TEMPLATES)[0]];
+    const templateKey = areaTemplateMap[node.area || node.department] || '6pager';
+    const template    = MEMO_TEMPLATES[templateKey] || MEMO_TEMPLATES['6pager'];
 
     const userName = window.Auth?.currentUser?.name || localStorage.getItem('bits_collab_name') || 'Unknown';
 
@@ -240,28 +241,21 @@ class DocsPanel {
       author:      node.ownerName || userName,
       createdAt:   new Date().toISOString(),
       updatedAt:   new Date().toISOString(),
-      sections:    template
-        ? template.sections.map(s => ({
-            ...s,
-            // Pre-fill the first section with node summary if available
-            content: s === template.sections[0] && node.description
-              ? node.description
-              : '',
-          }))
-        : [{ heading: 'Overview', content: node.description || '' }],
+      sections:    template.sections.map((s, idx) => ({
+        ...s,
+        content: idx === 0 && node.description ? node.description : '',
+      })),
       comments:    [],
       linkedNodes: [node.id],
       driveLink:   node.documentLink || null,
       wordCount:   0,
       status:      'draft',
-      // Carry over task metadata
       taskRef:     { id: node.id, label: node.label, owner: node.ownerName, area: node.area, dueDate: node.dueDate },
     };
 
     this.docs.unshift(doc);
     this._saveDocs();
 
-    // Open the docs panel and editor
     if (!this._isOpen) this.open();
     this._openEditor(doc);
 
@@ -509,7 +503,7 @@ Write only the section content — no introductory text, no "Here is the section
     const meta = document.getElementById('doc-editor-meta');
     if (meta) {
       const template = MEMO_TEMPLATES[doc.template];
-      meta.innerHTML = `${template.icon} ${template.name} · By ${doc.author} · ~${wc} words · ~${readMins} min read · ${doc.status}`;
+      meta.innerHTML = `${template?.icon || '📝'} ${template?.name || 'Document'} · By ${doc.author} · ~${wc} words · ~${readMins} min read · ${doc.status}`;
     }
   }
 

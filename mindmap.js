@@ -226,26 +226,63 @@ class MindMap {
       .attr('height', rectHeight)
       .attr('y', -rectHeight / 2);
 
+    // ── Priority stripe (left edge, 4px wide) ────────────────────────────────
+    nodeEnter.append('rect')
+      .attr('class', 'mm-priority-bar')
+      .attr('x', 0)
+      .attr('y', -rectHeight / 2 + 4)
+      .attr('width', 4)
+      .attr('height', rectHeight - 8)
+      .attr('rx', 2);
+
     // Icon
     nodeEnter.append('text')
       .attr('class', 'mm-node-icon')
-      .attr('x', 14)
+      .attr('x', 16)
       .attr('y', 0)
       .attr('dominant-baseline', 'central')
       .text(d => d.data.icon || (d.data.id === 'root' ? '🎯' : '📌'));
 
+    // Status symbol (tiny, left of label)
+    nodeEnter.append('text')
+      .attr('class', 'mm-status-sym')
+      .attr('y', 0)
+      .attr('dominant-baseline', 'central')
+      .style('font-size', '9px')
+      .style('pointer-events', 'none');
+
     // Text Label
     nodeEnter.append('text')
       .attr('class', 'mm-node-label')
-      .attr('x', 36)
+      .attr('x', 38)
       .attr('y', 0)
       .attr('dominant-baseline', 'central')
       .text(d => {
-        // limit to ~45 chars
         let txt = d.data.label;
-        if (txt.length > 45) txt = txt.substring(0, 42) + '...';
+        if (txt.length > 42) txt = txt.substring(0, 39) + '...';
         return txt;
       });
+
+    // ── Owner avatar circle ────────────────────────────────────────────────
+    nodeEnter.append('circle')
+      .attr('class', 'mm-owner-dot')
+      .attr('r', 9)
+      .attr('cy', 0);
+
+    nodeEnter.append('text')
+      .attr('class', 'mm-owner-initial')
+      .attr('dominant-baseline', 'central')
+      .attr('text-anchor', 'middle')
+      .style('font-size', '8px')
+      .style('font-weight', '800')
+      .style('fill', 'white')
+      .style('pointer-events', 'none');
+
+    // ── Due-date urgency dot (top-right corner) ───────────────────────────
+    nodeEnter.append('circle')
+      .attr('class', 'mm-due-dot')
+      .attr('r', 5)
+      .attr('cy', -rectHeight / 2 + 1);
 
     // Expand/Collapse Button (if has children)
     const collapseGroup = nodeEnter.append('g')
@@ -273,9 +310,13 @@ class MindMap {
       const g = d3.select(elements[i]);
       const textNode = g.select('.mm-node-label').node();
       let textWidth = textNode.getComputedTextLength();
-      let totalWidth = textWidth + 50; // padding
-      if (totalWidth < 120) totalWidth = 120;
-      
+      // Extra 26px on right for owner avatar
+      let totalWidth = textWidth + 72;
+      if (totalWidth < 140) totalWidth = 140;
+
+      const isRoot = d.data.id === 'root';
+      const isDeptNode = d.data.parentId === 'root';
+
       const STATUS_FILLS = {
         not_started: '#ffffff',
         in_progress: '#eff6ff',
@@ -286,7 +327,7 @@ class MindMap {
         cancelled:   '#f8fafc',
       };
       const STATUS_STROKES = {
-        not_started: null,         // uses dept color
+        not_started: null,
         in_progress: '#3b82f6',
         in_review:   '#eab308',
         need_support:'#f97316',
@@ -294,31 +335,120 @@ class MindMap {
         done:        '#22c55e',
         cancelled:   '#94a3b8',
       };
+      const STATUS_SYMBOLS = {
+        not_started:  '○',
+        in_progress:  '◐',
+        in_review:    '◑',
+        need_support: '⚠',
+        blocked:      '✕',
+        done:         '✓',
+        cancelled:    '—',
+      };
+      const STATUS_SYM_COLORS = {
+        not_started:  '#94a3b8',
+        in_progress:  '#3b82f6',
+        in_review:    '#eab308',
+        need_support: '#f97316',
+        blocked:      '#ef4444',
+        done:         '#22c55e',
+        cancelled:    '#94a3b8',
+      };
+      const PRIORITY_COLORS = {
+        p0: '#ef4444',
+        p1: '#f97316',
+        p2: '#94a3b8',
+      };
+      // Owner colour lookup — matches seed-sprint team colours
+      const OWNER_COLORS = {
+        'user_pratik':   '#534AB7',
+        'user_anjalee':  '#1D9E75',
+        'user_sohil':    '#D85A30',
+        'user_mohit':    '#378ADD',
+        'user_aryan':    '#D4537E',
+        'user_mantasha': '#BA7517',
+        'user_foram':    '#639922',
+      };
+      const OWNER_INITIALS = {
+        'user_pratik':   'PB',
+        'user_anjalee':  'AB',
+        'user_sohil':    'SO',
+        'user_mohit':    'MO',
+        'user_aryan':    'AR',
+        'user_mantasha': 'MA',
+        'user_foram':    'FO',
+      };
 
-      const fill   = STATUS_FILLS[d.data.status]   || '#ffffff';
-      const stroke = STATUS_STROKES[d.data.status] || this.getNodeColor(d);
+      const fill        = STATUS_FILLS[d.data.status]   || '#ffffff';
+      const stroke      = STATUS_STROKES[d.data.status] || this.getNodeColor(d);
+      const statusSym   = STATUS_SYMBOLS[d.data.status]   || '';
+      const statusSymCol= STATUS_SYM_COLORS[d.data.status]|| '#94a3b8';
+      const priorityCol = PRIORITY_COLORS[(d.data.priority||'').toLowerCase()] || 'transparent';
+      const ownerColor  = OWNER_COLORS[d.data.createdBy]  || '#94a3b8';
+      const ownerInit   = OWNER_INITIALS[d.data.createdBy]|| (d.data.ownerName?.charAt(0) || '?');
+
+      // Due-date urgency
+      const now         = Date.now();
+      const due         = d.data.dueDate;
+      const isOverdue   = due && due < now && d.data.status !== 'done' && d.data.status !== 'cancelled';
+      const isDueSoon   = due && due > now && due < now + 2 * 86400000;
 
       g.attr('data-node-id', d.data.id);
 
+      // Main rect
       g.select('.mm-node-rect')
         .attr('width', totalWidth)
         .attr('x', 0)
         .attr('fill', fill)
-        .attr('stroke', stroke)
-        .attr('stroke-width', 2)
+        .attr('stroke', isOverdue ? '#ef4444' : stroke)
+        .attr('stroke-width', isOverdue ? 2.5 : 2)
+        .attr('stroke-dasharray', isOverdue ? '5,3' : null)
         .attr('opacity', (d.data.status === 'done' || d.data.status === 'cancelled') ? 0.55 : 1);
 
+      // Priority stripe
+      g.select('.mm-priority-bar')
+        .attr('fill', isRoot || isDeptNode ? 'transparent' : priorityCol)
+        .attr('opacity', 0.85);
+
+      // Status symbol (just after icon)
+      g.select('.mm-status-sym')
+        .attr('x', isRoot || isDeptNode ? -999 : 33)
+        .text(isRoot || isDeptNode ? '' : statusSym)
+        .style('fill', statusSymCol);
+
+      // Owner avatar circle (right side)
+      const ownerX = totalWidth - 14;
+      g.select('.mm-owner-dot')
+        .attr('cx', isRoot || isDeptNode ? -999 : ownerX)
+        .attr('fill', ownerColor)
+        .attr('opacity', isRoot || isDeptNode ? 0 : 0.9)
+        .attr('stroke', 'white')
+        .attr('stroke-width', 1.5);
+
+      g.select('.mm-owner-initial')
+        .attr('x', isRoot || isDeptNode ? -999 : ownerX)
+        .attr('y', 0)
+        .text(isRoot || isDeptNode ? '' : ownerInit);
+
+      // Due-date urgency dot
+      g.select('.mm-due-dot')
+        .attr('cx', totalWidth - 5)
+        .attr('fill', isOverdue ? '#ef4444' : isDueSoon ? '#f97316' : 'transparent')
+        .attr('opacity', (isOverdue || isDueSoon) && !isRoot ? 1 : 0)
+        .attr('stroke', 'white')
+        .attr('stroke-width', 1);
+
+      // Collapse btn
       g.select('.mm-collapse-btn')
         .style('display', d.data._childCount > 0 ? 'block' : 'none')
-        .attr('transform', `translate(${totalWidth + 10}, 0)`);
-        
-      // Also update text and icon for dynamic re-renders
+        .attr('transform', `translate(${totalWidth + 12}, 0)`);
+
+      // Update text + icon for re-renders
       g.select('.mm-node-label').text(() => {
-          let txt = d.data.label;
-          if (txt.length > 45) txt = txt.substring(0, 42) + '...';
-          return txt;
+        let txt = d.data.label;
+        if (txt.length > 42) txt = txt.substring(0, 39) + '...';
+        return txt;
       });
-      g.select('.mm-node-icon').text(d.data.icon || (d.data.id === 'root' ? '🎯' : '📌'));
+      g.select('.mm-node-icon').text(d.data.icon || (isRoot ? '🎯' : '📌'));
       g.select('.mm-collapse-text').text(d.data.collapsed ? '+' : '-');
     });
 
