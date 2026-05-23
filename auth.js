@@ -281,17 +281,27 @@ class AuthManager {
   }
 
   async _submitLoginPin(userId) {
-    // Temporarily log in to get a token, then verify PIN
+    // ✅ CORRECT ORDER: verify PIN *first*, create session *only if correct*
+    // Old bug: login() fired auth:login event before PIN was checked
     try {
-      await this.login(userId);
-      const ok = await this.verifyPin(this._lpValue);
-      if (ok) {
+      // Step 1: verify PIN without a session (userId + pin in body is enough)
+      const r = await fetch('/api/auth/verify-pin', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ userId, pin: this._lpValue }),
+      });
+      const data = await r.json();
+
+      if (r.ok && data.ok) {
+        // PIN correct — NOW create the session
+        await this.login(userId);
         this.hideLoginScreen();
+        // Signal app to start (safety timer may be waiting)
+        window._adminPinVerified = true;
+        window.dispatchEvent(new Event('admin:pin:ok'));
         window.app?.showToast(`Welcome, ${this.currentUser.name}! 🔐`, 'success');
       } else {
-        // Reject — clear session, stay on pin screen
-        clearSession();
-        this.session = null;
+        // Wrong PIN — no session created, stay on PIN screen
         this._lpValue = '';
         document.querySelectorAll('#lp-dots .pin-dot').forEach(d => d.classList.remove('filled'));
         const err = document.getElementById('lp-error');
@@ -301,7 +311,8 @@ class AuthManager {
         }
       }
     } catch (e) {
-      window.app?.showToast('Error: ' + e.message, 'error');
+      this._lpValue = '';
+      window.app?.showToast('Error verifying PIN: ' + e.message, 'error');
     }
   }
 

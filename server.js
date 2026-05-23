@@ -74,28 +74,126 @@ function saveToDiskDebounced() {
   _saveTimer = setTimeout(() => saveData(), 1500);
 }
 
-// ── Boot: try MongoDB first, fall back to file ──────────────────────────────
+// ── Build default sprint state (runs when no data exists on fresh deploy) ────
+function buildDefaultState() {
+  const { TEAM, DOCS, MEETINGS, STANDUP, SPRINT } = require('./seed-sprint');
+  const crypto = require('crypto');
+  const uid = () => crypto.randomBytes(6).toString('hex');
+
+  const DEPT_DEFS = [
+    { key:'marketing',  label:'Marketing',   icon:'📣' },
+    { key:'operations', label:'Operations',  icon:'⚙️' },
+    { key:'curriculum', label:'Curriculum',  icon:'🎓' },
+    { key:'technology', label:'Technology',  icon:'💻' },
+    { key:'community',  label:'Community',   icon:'🤝' },
+    { key:'management', label:'Management',  icon:'🏢' },
+    { key:'finance',    label:'Finance',     icon:'💰' },
+    { key:'space_design',label:'Space Design',icon:'🏗️'},
+  ];
+
+  const nodes = [];
+
+  // Root
+  nodes.push({ id:'root', label:'Bits & Studios', description: SPRINT.goal,
+    icon:'🎯', status:'in_progress', parentId: null, createdAt: Date.now() });
+
+  // Departments
+  const deptIdMap = {};
+  for (const d of DEPT_DEFS) {
+    const id = 'dept_' + d.key;
+    nodes.push({ id, label: d.label, icon: d.icon, department: d.key,
+      parentId: 'root', status: 'in_progress', createdAt: Date.now() });
+    deptIdMap[d.key] = id;
+  }
+
+  // Sprint group folders (one per dept used by docs)
+  const usedDepts = [...new Set(DOCS.map(d => d.dept))];
+  const groupIds  = {};
+  const GROUP_LABELS = {
+    marketing: 'Brand + Marketing Docs',
+    operations: 'Operations Docs',
+    curriculum: 'Curriculum Docs',
+  };
+  for (const dept of usedDepts) {
+    const gid = 'sprint_' + dept;
+    nodes.push({ id: gid, parentId: deptIdMap[dept], label: GROUP_LABELS[dept] || dept + ' Docs',
+      icon: '📁', department: dept, status: 'not_started', createdAt: Date.now(),
+      description: 'Documentation Week Sprint — May 24-30, 2026',
+      createdBy: 'system', ownerName: 'Admin', collaborators: [] });
+    groupIds[dept] = gid;
+  }
+
+  // 19 Sprint documents
+  for (const doc of DOCS) {
+    nodes.push({
+      id: 'doc_' + uid(), parentId: groupIds[doc.dept] || deptIdMap[doc.dept] || 'root',
+      label: doc.label, description: doc.description, icon: doc.icon || '📄',
+      department: doc.dept, status: doc.status || 'not_started',
+      priority: doc.priority || 'high', dueDate: doc.dueDate,
+      assignees: [doc.owner], support: doc.support, area: doc.area,
+      meetingDate: doc.meetingDate, createdBy: doc.ownerId, ownerName: doc.owner,
+      collaborators: [], createdAt: Date.now(),
+    });
+  }
+
+  // Daily standup
+  nodes.push({ id: 'standup_daily', parentId: deptIdMap['management'],
+    label: STANDUP.label, description: STANDUP.description, icon: STANDUP.icon,
+    department: 'management', status: 'in_progress', priority: 'high',
+    assignees: STANDUP.assignees, createdBy: 'system', ownerName: 'Team',
+    collaborators: [], createdAt: Date.now() });
+
+  // Meetings
+  for (const mtg of MEETINGS) {
+    nodes.push({ id: 'mtg_' + uid(),
+      parentId: deptIdMap[mtg.dept] || deptIdMap['management'],
+      label: mtg.label, description: `Duration: ${mtg.duration}`,
+      icon: mtg.icon || '📅', department: mtg.dept, status: 'not_started',
+      dueDate: mtg.dueDate, assignees: mtg.assignees,
+      createdBy: 'system', ownerName: 'Admin', collaborators: [], createdAt: Date.now() });
+  }
+
+  // Team members (users)
+  const users = TEAM.map(m => ({
+    ...m, pin: process.env.ADMIN_PIN || 'IamgoingtoMake', createdAt: Date.now(),
+  }));
+
+  console.log(`[Server] 🌱 Built default sprint state: ${nodes.length} nodes, ${users.length} users`);
+  return { nodes, users, settings: {}, version: 1 };
+}
+
+// ── Boot: try MongoDB first, fall back to file, fall back to defaults ─────────
 async function boot() {
   const mongoOk = await connectMongo();
 
   if (mongoOk) {
     const mongoData = await loadFromMongo();
-    if (mongoData && mongoData.nodes) {
+    if (mongoData && mongoData.nodes?.length) {
       sharedState = mongoData;
-      console.log(`[Server] ✅ Loaded ${sharedState.nodes?.length ?? 0} nodes from MongoDB Atlas`);
-      // Also write to local disk as backup
+      console.log(`[Server] ✅ Loaded ${sharedState.nodes.length} nodes from MongoDB Atlas`);
       saveToDisk();
     } else {
-      // MongoDB connected but empty — seed from local file if it exists
+      // MongoDB empty — try local file first
       loadFromDisk();
       if (sharedState.nodes?.length) {
         console.log('[Server] Seeding MongoDB from local file...');
         await saveToMongo(sharedState);
+      } else {
+        // Truly fresh deploy — build defaults and save
+        console.log('[Server] 🆕 Fresh deploy detected — loading sprint defaults...');
+        sharedState = buildDefaultState();
+        saveToDisk();
+        await saveToMongo(sharedState);
       }
     }
   } else {
-    // No MongoDB — use local file only
+    // No MongoDB
     loadFromDisk();
+    if (!sharedState.nodes?.length) {
+      console.log('[Server] 🆕 No data on disk — loading sprint defaults...');
+      sharedState = buildDefaultState();
+      saveToDisk();
+    }
   }
 }
 
