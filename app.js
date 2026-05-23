@@ -343,52 +343,38 @@ class App {
 
 // Bootstrap — auth first, then app
 document.addEventListener('DOMContentLoaded', async () => {
-  // Safety net — if JS crashes entirely, remove the overlay after 4s so page isn't blank
+  // Safety timer: only catches total JS crash — never hides login screen silently
   const safetyTimer = setTimeout(() => {
-    const overlay = document.getElementById('login-overlay');
-    if (overlay && !overlay.classList.contains('hidden')) {
-      overlay.classList.add('hidden');
-    }
     if (!window.app) {
-      try { window.app = new App(); } catch(e) { console.error('[App] Safety init failed:', e); }
+      console.warn('[App] Safety timer fired — JS may have crashed');
+      // Do NOT hide login screen — user must always click to log in
     }
-  }, 4000);
+  }, 8000);
 
-  // 1. Boot auth (restore session or show login)
-  let loggedIn = false;
+  // Boot auth — always returns false now (no silent session restore)
   try {
-    loggedIn = await window.Auth.boot();
+    await window.Auth.boot();
   } catch (e) {
-    console.warn('[Auth] Boot failed, skipping auth:', e.message);
-    loggedIn = true; // let app load even if auth server is unreachable
+    console.warn('[Auth] Boot error:', e.message);
+    // Still show login — never auto-bypass
   }
 
-  if (!loggedIn) {
-    // Show login screen — app inits after user picks profile
-    window.Auth.showLoginScreen();
+  // Always show login screen and wait for user to click
+  window.Auth.showLoginScreen();
 
-    window.addEventListener('auth:login', () => {
-      clearTimeout(safetyTimer);
-      window.Auth.hideLoginScreen();
-      try {
+  // App starts only after a real login click
+  window.addEventListener('auth:login', () => {
+    clearTimeout(safetyTimer);
+    window.Auth.hideLoginScreen();
+    try {
+      if (!window.app) {
         window.app = new App();
         _bindGlobalShortcuts();
-      } catch(e) {
-        console.error('[App] Init failed after login:', e);
       }
-    }, { once: true });
-    return;
-  }
-
-  // Already logged in — hide overlay (safety) and launch app
-  clearTimeout(safetyTimer);
-  window.Auth.hideLoginScreen();
-  try {
-    window.app = new App();
-    _bindGlobalShortcuts();
-  } catch(e) {
-    console.error('[App] Init failed:', e);
-  }
+    } catch(e) {
+      console.error('[App] Init failed after login:', e);
+    }
+  }, { once: true });
 });
 
 function _bindGlobalShortcuts() {
