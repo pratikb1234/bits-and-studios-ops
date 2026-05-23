@@ -1,20 +1,18 @@
-// ─── Bits & Studios — Co-Jarvis: AI Advisor powered by Gemini ───────────────
+// ─── Bits & Studios — AI Advisor with Personas ──────────────────────────────
 
 // ── Persona Definitions ───────────────────────────────────────────────────────
 const PERSONAS = {
   gemini: {
     id:          'gemini',
-    name:        'Jarvis',
+    name:        'Gemini',
     title:       'Strategic Advisor',
     subtitle:    'Full context · Knows everything',
     avatar:      '✨',
     gradient:    'linear-gradient(135deg, #4f46e5, #7c3aed)',
     description: 'Master strategist with full visibility into all tasks, docs, and team activity',
-    personality: `You are Jarvis (Co-Jarvis), the master strategic advisor for Bits & Studios. You have read every document, know every task, and understand the full business context. You respond like a brilliant COO — direct, insightful, proactive, and always grounded in the actual data you have access to.
+    personality: `You are Gemini, the master strategic advisor for Bits & Studios. You have read every document, know every task, and understand the full business context. You respond like a brilliant COO — direct, insightful, proactive, and always grounded in the actual data you have access to.
 
-You can also take actions on the mind map: set deadlines, update task statuses, add tasks, mark things complete. When the user asks you to set a deadline or if no deadline exists for a task they mention, SET IT using map_actions.
-
-If a user asks about a completed task, you still have full context on it — don't say you don't know.
+When someone asks what they should work on today, you check their assigned tasks, priority, and deadlines and give them a crisp personal daily briefing.
 
 You are conversational but sharp. You reference specific task names, document titles, and real data — never generic advice.`,
   },
@@ -109,49 +107,21 @@ class ChatPanel {
     this.api            = new GeminiAPI('');
     this.messages       = this.data.getChatHistory();
     this.currentPersona = PERSONAS.gemini;
-    this._orgKeyReady   = false;
 
     this.bindEvents();
+    this._syncKey();
     this._renderPersonaBar();
-
-    // Fetch org key async — render after resolved, not during constructor
-    this._checkOrgKey().then(() => this.render());
+    this.render();
   }
 
   // ── Key management ────────────────────────────────────────────────────────
-  // Checks org-level key from server (admin sets once, all users benefit)
-  async _checkOrgKey() {
-    try {
-      const r = await fetch('/api/check-key');
-      const { hasKey, key } = await r.json();
-      if (hasKey && key) {
-        this.api.setApiKey(key);
-        this._orgKeyReady = true;
-        return true;
-      }
-    } catch {}
-    // Fallback to local settings (admin-only legacy path)
-    const s = this.data.getSettings();
-    const localKey = s.geminiApiKey || s.anthropicApiKey || '';
-    if (localKey) {
-      this.api.setApiKey(localKey);
-      this._orgKeyReady = true;
-      return true;
-    }
-    this._orgKeyReady = false;
-    return false;
-  }
-
   _syncKey() {
-    // Return cached state synchronously (populated by _checkOrgKey)
-    if (this._orgKeyReady) return 'org_key_set'; // truthy sentinel
-    // Try local as fallback
     const s = this.data.getSettings();
     const key = s.geminiApiKey || s.anthropicApiKey || '';
-    if (key) this.api.setApiKey(key);
+    this.api.setApiKey(key);
     return key;
   }
-  get _hasKey() { return this._orgKeyReady || !!this._syncKey(); }
+  get _hasKey() { return !!this._syncKey(); }
 
   // ── Persona bar ───────────────────────────────────────────────────────────
   _renderPersonaBar() {
@@ -202,10 +172,10 @@ class ChatPanel {
 
   _addPersonaGreeting() {
     const p    = this.currentPersona;
-    const user = window.Auth?.currentUser?.name || localStorage.getItem('bits_collab_name') || 'there';
+    const user = localStorage.getItem('bits_collab_name') || 'there';
 
     const greetings = {
-      gemini: `Hey ${user}! ✨ I'm **Jarvis**, your strategic advisor for **Bits & Studios**.\n\nI have full context — all your tasks, documents, and team activity. I can also set deadlines, update statuses, and add tasks directly from our conversation. Try:\n• *"What should I work on today?"*\n• *"Set a deadline for Outside Signage to June 5th"*\n• *"What's missing before June 1st launch?"*`,
+      gemini: `Hey ${user}! 👋 I'm Gemini, your strategic advisor for **Bits & Studios**.\n\nI have full context — all your tasks, documents, and team activity. Try asking:\n• *"What should I work on today?"*\n• *"What's missing before June 1st launch?"*\n• *"Add 5 tasks for the enrollment system"*`,
       aria:   `Hey ${user}! 📣 I'm **Aria**, your Marketing & Growth advisor.\n\nI live and breathe Instagram Reels, WhatsApp automation, and enrollment campaigns. Ask me:\n• *"Write 3 Instagram caption templates for launch week"*\n• *"What's our content calendar for the next 30 days?"*\n• *"How do we convert trial class attendees to paying students?"*`,
       atlas:  `Hello ${user}. 💰 I'm **Atlas**, your Finance & Operations advisor.\n\nI think in unit economics and break-even points. Let's talk numbers:\n• *"What should we charge per student per month?"*\n• *"When do we break even at 20 students?"*\n• *"What's the ROI on buying 10 Arduino kits?"*`,
       sage:   `Hi ${user}! 🎓 I'm **Sage**, your Curriculum & Learning Expert.\n\nEvery program I design creates a "wow moment" that hooks students for life. Ask me:\n• *"Design a 12-week Arduino curriculum for 10-year-olds"*\n• *"What projects are most impressive for parent demo day?"*\n• *"How do we structure trial class for maximum conversion?"*`,
@@ -224,54 +194,46 @@ class ChatPanel {
     const team     = this.data.getTeam();
     const nodes    = this.data.getAllNodes();
     const allTasks = nodes.filter(n => n.id !== 'root');
-    const userName = window.Auth?.currentUser?.name || localStorage.getItem('bits_collab_name') || null;
+    const userName = localStorage.getItem('bits_collab_name') || null;
 
-    // Separate active vs completed tasks
-    const DONE_STATUSES = new Set(['done', 'completed', 'cancelled']);
-    const activeTasks    = allTasks.filter(n => !DONE_STATUSES.has(n.status));
-    const completedTasks = allTasks.filter(n => DONE_STATUSES.has(n.status));
-    const inProgress     = allTasks.filter(n => n.status === 'in_progress').length;
+    const done       = allTasks.filter(n => n.status === 'done').length;
+    const inProgress = allTasks.filter(n => n.status === 'in_progress').length;
 
-    const _taskLine = t =>
-      `    • [${t.status || 'not_started'}] ${t.label}` +
-      ` | priority: ${t.priority || 'medium'}` +
-      (t.assignees?.length ? ` | assigned: ${t.assignees.join(', ')}` : '') +
-      (t.dueDate ? ` | due: ${t.dueDate}` : ' | NO DEADLINE') +
-      (t.description ? `\n      desc: ${t.description.slice(0, 100)}` : '');
-
-    // Group active tasks by dept
+    // Group tasks by dept
     const byDept = {};
-    activeTasks.forEach(n => {
+    allTasks.forEach(n => {
       const dept = n.department || 'general';
       if (!byDept[dept]) byDept[dept] = [];
       byDept[dept].push(n);
     });
+
     const taskLines = Object.entries(byDept).map(([dept, tasks]) =>
-      `  [${dept.toUpperCase()}]\n` + tasks.map(_taskLine).join('\n')
+      `  [${dept.toUpperCase()}]\n` + tasks.map(t =>
+        `    • ${t.label} | status: ${t.status || 'not_started'} | priority: ${t.priority || 'medium'}` +
+        (t.assignees?.length ? ` | assigned: ${t.assignees.join(', ')}` : '') +
+        (t.dueDate ? ` | due: ${t.dueDate}` : '') +
+        (t.description ? `\n      desc: ${t.description.slice(0, 120)}` : '')
+      ).join('\n')
     ).join('\n\n');
 
-    // Completed tasks section (AI has full memory of these)
-    const completedLines = completedTasks.length
-      ? completedTasks.map(t => `    • ✅ ${t.label} (${t.status})${t.dueDate ? ' | was due: ' + t.dueDate : ''}`).join('\n')
-      : '    None yet.';
-
-    // ID lookup table (internal only, never shown to user)
+    // ID lookup table for map actions only — AI uses internally, never shows to user
     const idRef = allTasks.map(t => `${t.label} => ${t.id}`).join('\n');
 
-    // My tasks
+    // Tasks assigned to current user
     let myTasksSection = '';
     if (userName) {
-      const myTasks = activeTasks.filter(t =>
-        t.assignees?.some(a => a.toLowerCase().includes(userName.toLowerCase())) ||
-        t.createdBy === window.Auth?.userId
+      const myTasks = allTasks.filter(t =>
+        t.assignees?.some(a => a.toLowerCase().includes(userName.toLowerCase()))
       );
       if (myTasks.length) {
-        const overdueNow = myTasks.filter(t => t.dueDate && new Date(t.dueDate) < new Date());
         myTasksSection = `\n════════════════════════════════════════════
-👤 ${userName.toUpperCase()}'S TASKS
+👤 TASKS ASSIGNED TO ${userName.toUpperCase()}
 ════════════════════════════════════════════
-${myTasks.map(_taskLine).join('\n')}
-${overdueNow.length ? `\n⚠️ OVERDUE: ${overdueNow.map(t => t.label).join(', ')}` : ''}`;
+${myTasks.map(t =>
+  `• ${t.label} | ${t.status || 'not_started'} | ${t.priority || 'medium'} priority${t.dueDate ? ' | due: ' + t.dueDate : ''}`
+).join('\n')}
+
+When ${userName} asks "what should I work on today?", prioritize their overdue + high priority tasks above.`;
       }
     }
 
@@ -281,16 +243,12 @@ ${overdueNow.length ? `\n⚠️ OVERDUE: ${overdueNow.map(t => t.label).join(', 
     const docLines = docs.map(d => {
       const wc = d.sections.reduce((s, sec) =>
         s + (sec.content||'').replace(/<[^>]+>/g,'').split(/\s+/).filter(Boolean).length, 0);
-      return `  📄 "${d.title}" (${wc} words)`;
+      return `  📄 "${d.title}" (${wc} words) — template: ${d.template}`;
     }).join('\n') || '  None yet.';
 
-    // Recent history (per-user namespaced)
+    // Recent history
     let history = [];
-    try {
-      const uid = window.Auth?.userId;
-      const key = uid ? `bits_history_${uid}` : 'bits_history';
-      history = JSON.parse(localStorage.getItem(key)||'[]').slice(0,15);
-    } catch {}
+    try { history = JSON.parse(localStorage.getItem('bits_history')||'[]').slice(0,15); } catch {}
     const recentLines = history.map(h =>
       `  • ${h.userName || '?'}: ${h.description} (${new Date(h.timestamp).toLocaleDateString('en-IN')})`
     ).join('\n') || '  No activity yet.';
@@ -310,17 +268,12 @@ Mission:    Premier Robotics + AI + Coding Makerspace for ages 6–18
 Team: ${team.length ? team.join(', ') : 'Not configured'}
 Current User: ${userName || 'Unknown'}
 
-Task Summary: ${completedTasks.length} done | ${inProgress} in progress | ${activeTasks.length} active | ${allTasks.length} total
+Task Progress: ${done}/${allTasks.length} done | ${inProgress} in progress | Completion: ${allTasks.length ? Math.round(done/allTasks.length*100) : 0}%
 ${myTasksSection}
 ════════════════════════════════════════════
-📋 ACTIVE TASKS (ALL NEED ACTION)
+📋 ALL TASKS (with IDs for map actions)
 ════════════════════════════════════════════
-${taskLines || 'No active tasks.'}
-
-════════════════════════════════════════════
-✅ COMPLETED / DONE TASKS (full memory — user may ask about these)
-════════════════════════════════════════════
-${completedLines}
+${taskLines || 'No tasks yet.'}
 
 ════════════════════════════════════════════
 📄 DOCUMENTS
@@ -366,46 +319,16 @@ ${idRef}
 
   render() {
     const hasKey = this._hasKey;
-    const isAdmin = window.Auth?.isAdmin;
+    this.apiKeyPrompt?.classList.toggle('hidden', hasKey);
+    this.msgCont.style.display = hasKey ? 'flex' : 'none';
 
-    if (!hasKey) {
-      // Admin sees the key setup prompt; employees see a friendly locked state
-      if (this.apiKeyPrompt) {
-        this.apiKeyPrompt.classList.toggle('hidden', !isAdmin);
-      }
-      // Employee fallback message
-      let empMsg = document.getElementById('jarvis-no-key-msg');
-      if (!isAdmin) {
-        if (!empMsg) {
-          empMsg = document.createElement('div');
-          empMsg.id = 'jarvis-no-key-msg';
-          empMsg.className = 'jarvis-no-key-msg';
-          empMsg.innerHTML = `
-            <div class="jnk-icon">🛡️</div>
-            <div class="jnk-title">Jarvis is warming up</div>
-            <div class="jnk-sub">Your admin is setting up the AI key.<br>Come back in a moment!</div>
-          `;
-          this.el.querySelector('.chat-body')?.appendChild(empMsg);
-        }
-        empMsg.style.display = 'flex';
+    if (hasKey) {
+      this._clearMessages();
+      if (!this.messages.length) {
+        this._addPersonaGreeting();
       } else {
-        if (empMsg) empMsg.style.display = 'none';
+        this.messages.forEach(m => this._addMsgToUI(m));
       }
-      this.msgCont.style.display = 'none';
-      return;
-    }
-
-    // Key is present — hide setup UI, show chat
-    if (this.apiKeyPrompt) this.apiKeyPrompt.classList.add('hidden');
-    const empMsg = document.getElementById('jarvis-no-key-msg');
-    if (empMsg) empMsg.style.display = 'none';
-    this.msgCont.style.display = 'flex';
-
-    this._clearMessages();
-    if (!this.messages.length) {
-      this._addPersonaGreeting();
-    } else {
-      this.messages.forEach(m => this._addMsgToUI(m));
     }
     this.scrollToBottom();
   }
@@ -430,26 +353,14 @@ ${idRef}
       this.sendBtn.disabled = !this.inputField.value.trim();
     });
 
-    this.saveKeyBtn?.addEventListener('click', async () => {
+    this.saveKeyBtn?.addEventListener('click', () => {
       const key = this.apiKeyInput?.value?.trim();
-      if (!key) return;
-      try {
-        // Save org-wide on the server (persists across deploys)
-        const r = await fetch('/api/save-key', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Session-Token': window.Auth?.token || '' },
-          body: JSON.stringify({ key }),
-        });
-        if (!r.ok) throw new Error('Server rejected key');
-        // Also cache locally for this session
+      if (key) {
         const s = this.data.getSettings();
         this.data.saveSettings({ ...s, geminiApiKey: key });
-        this.api.setApiKey(key);
-        this._orgKeyReady = true;
+        this._syncKey();
         this.render();
-        window.app?.showToast('✅ Gemini API key saved org-wide — all users now have Jarvis!', 'success');
-      } catch (e) {
-        window.app?.showToast('❌ Could not save key: ' + e.message, 'error');
+        window.app?.showToast('✅ Gemini API key saved', 'success');
       }
     });
   }
@@ -493,7 +404,7 @@ ${idRef}
       this._addMsgToUI(assistantMsg);
       this.data.saveChatHistory(this.messages);
 
-      if (appliedActions > 0) window.app?.showToast(`✨ Jarvis updated ${appliedActions} task${appliedActions>1?'s':''}`, 'success');
+      if (appliedActions > 0) window.app?.showToast(`✨ ${this.currentPersona.name} added ${appliedActions} tasks`, 'success');
 
     } catch (err) {
       console.error('[ChatPanel] Error:', err);
@@ -546,29 +457,14 @@ ${idRef}
     actions.forEach(act => {
       try {
         if (act.action === 'add_node') {
-          const user = window.Auth?.currentUser;
           this.data.addNode(act.parentId || 'root', {
-            label:        act.label || 'New Task',
-            department:   act.department || null,
-            icon:         act.icon || this.currentPersona.avatar,
-            priority:     act.priority || 'medium',
-            assignees:    act.assignees || [],
-            dueDate:      act.dueDate   || null,
-            status:       act.status    || 'not_started',
-            createdBy:    user?.id   || null,
-            ownerName:    user?.name || null,
-            collaborators: [],
+            label: act.label || 'New Task', department: act.department || null,
+            icon: act.icon || this.currentPersona.avatar, priority: act.priority || 'medium',
+            assignees: act.assignees || [],
           });
           count++;
         } else if (act.action === 'update_node' && act.id) {
-          // Only update known safe fields (never overwrite createdBy from chat)
-          const safe = {};
-          if (act.status)   safe.status   = act.status;
-          if (act.dueDate)  safe.dueDate  = act.dueDate;
-          if (act.priority) safe.priority = act.priority;
-          if (act.label)    safe.label    = act.label;
-          if (act.assignees) safe.assignees = act.assignees;
-          if (Object.keys(safe).length) { this.data.updateNode(act.id, safe); count++; }
+          this.data.updateNode(act.id, act); count++;
         } else if (act.action === 'delete_node' && act.id) {
           this.data.deleteNode(act.id); count++;
         }
